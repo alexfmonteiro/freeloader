@@ -1,0 +1,180 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["requests"]
+# ///
+"""
+freeloader — offload file/web/log parsing to free cloud LLMs (Gemini/Groq) instead of burning
+Claude tokens on content you only need to extract or summarize.
+
+Usage:
+  freeloader '<instructions>' [<file_or_text_or_->]
+  echo "data" | freeloader '<instructions>'
+  curl -s https://example.com | freeloader '<instructions>'
+  freeloader --list-providers
+"""
+
+import sys
+import json
+import argparse
+import os
+import time
+import requests
+
+CONFIG_PATH = os.path.expanduser("~/.config/freeloader/config.json")
+DEFAULT_TIMEOUT = 300
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+MAX_RETRIES = 3
+# Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
+MAX_CONTENT_CHARS = {
+    "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
+    "groq": 400_000,      # Groq Llama 4 Scout: ~100K tokens effective
+}
+DEFAULT_MAX_CHARS = 200_000
+
+
+def load_config():
+    # Support legacy path (~/.claude/local-parse-config.json) for migration
+    legacy_path = os.path.expanduser("~/.claude/local-parse-config.json")
+    path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else legacy_path
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"Error: config not found. Run install.sh or create {CONFIG_PATH}", file=sys.stderr)
+        sys.exit(1)
+
+
+def list_providers():
+    config = load_config()
+    for p in config["providers"]:
+        key_status = "configured" if p["api_key"] and not p["api_key"].startswith("YOUR_") else "NOT SET"
+        print(f"  {p['name']:10s}  model={p['model']}  key={key_status}")
+
+
+def truncate_content(content, provider_name):
+    limit = MAX_CONTENT_CHARS.get(provider_name, DEFAULT_MAX_CHARS)
+    if len(content) <= limit:
+        return content, False
+    return content[:limit], True
+
+
+def call_llm(provider, instructions, content):
+    content, was_truncated = truncate_content(content, provider["name"])
+    if was_truncated:
+        instructions += "\n\nNOTE: The input was truncated to fit context limits. Work with what is provided."
+        print(f"[{provider['name']}] input truncated to {len(content):,} chars", file=sys.stderr)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {provider['api_key']}",
+    }
+    payload = {
+        "model": provider["model"],
+        "messages": [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": content},
+        ],
+        "temperature": 0.1,
+        "stream": False,
+    }
+    r = requests.post(
+        f"{provider['base_url']}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def call_with_retry(provider, instructions, content):
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return call_llm(provider, instructions, content)
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status in RETRYABLE_STATUSES and attempt < MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                print(f"[{provider['name']}] {status}, retrying in {wait}s... ({attempt + 1}/{MAX_RETRIES})", file=sys.stderr)
+                time.sleep(wait)
+                last_error = e
+            else:
+                raise
+    raise last_error
+
+
+def call_with_fallback(providers, instructions, content):
+    errors = []
+    for p in providers:
+        if not p["api_key"] or p["api_key"].startswith("YOUR_"):
+            errors.append((p["name"], "API key not configured"))
+            continue
+        try:
+            result = call_with_retry(p, instructions, content)
+            return result, p["name"]
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "?"
+            errors.append((p["name"], f"HTTP {status}"))
+            print(f"[{p['name']}] failed ({status}), trying next provider...", file=sys.stderr)
+        except requests.exceptions.Timeout:
+            errors.append((p["name"], "timeout"))
+            print(f"[{p['name']}] timed out, trying next provider...", file=sys.stderr)
+        except requests.exceptions.RequestException as e:
+            errors.append((p["name"], str(e)))
+            print(f"[{p['name']}] error, trying next provider...", file=sys.stderr)
+
+    print("All providers failed:", file=sys.stderr)
+    for name, err in errors:
+        print(f"  {name}: {err}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_content(source):
+    if source is None or source == "-":
+        return sys.stdin.read()
+    try:
+        with open(source, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        return source
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Offload parsing/summarization to free cloud LLMs instead of burning Claude tokens.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--list-providers", action="store_true", help="List configured providers and exit")
+    parser.add_argument("instructions", nargs="?", help="What to extract or summarize")
+    parser.add_argument(
+        "source",
+        nargs="?",
+        default=None,
+        help="File path, raw text, or '-' for stdin (omit to read from stdin)",
+    )
+
+    args = parser.parse_args()
+
+    if args.list_providers:
+        list_providers()
+        return
+
+    if not args.instructions:
+        parser.error("instructions are required (pass as first positional argument)")
+
+    content = read_content(args.source)
+
+    if not content.strip():
+        print("Error: empty input", file=sys.stderr)
+        sys.exit(1)
+
+    config = load_config()
+    result, provider_used = call_with_fallback(config["providers"], args.instructions, content)
+    print(f"[via {provider_used}]", file=sys.stderr)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

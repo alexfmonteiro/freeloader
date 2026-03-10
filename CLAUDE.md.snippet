@@ -1,0 +1,7 @@
+## Token Savings Rule
+When reading files or web content for parsing, extraction, summarization, or pattern searching (not for code
+reasoning/editing), delegate to `freeloader` via Bash instead of using Read/Grep/WebFetch. This applies even
+mid-task (debugging, troubleshooting, etc.). For web content, pipe curl into freeloader:
+`curl -s '<url>' | freeloader '<instructions>'`. Examples: searching logs for errors, extracting fields from
+configs, summarizing API responses, finding patterns in data files, fetching and summarizing web pages.
+Only use Read/Grep directly when you need to reason about code structure or make edits.
