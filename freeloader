@@ -37,7 +37,7 @@ CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 DEFAULT_TIMEOUT = 300
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
-DEFAULT_MAX_TOKENS = 1000  # caps LLM response to force brevity; overridable per provider
+DEFAULT_MAX_TOKENS = 4000  # caps LLM response; overridable per provider in config
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
     "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
@@ -94,6 +94,8 @@ SYSTEM_PROMPT_TEMPLATE = (
     "- Plain text preferred. Use minimal markdown only if it genuinely aids structure (tables, lists).\n"
     "- If extracting data, use the most compact representation that preserves meaning.\n"
     "- If nothing relevant exists in the input, output exactly: [nothing found]\n"
+    "- If you cannot fit all results within your token limit, include as many as possible "
+    "then end with: [truncated — N more items not shown]\n"
     "- Never apologize, explain limitations, or ask for clarification.\n\n"
     "Task: {instructions}"
 )
