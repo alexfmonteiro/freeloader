@@ -42,25 +42,68 @@ mkdir -p "$SKILL_DIR"
 cp skill/SKILL.md "$SKILL_DIR/SKILL.md"
 echo "${GREEN}✓${RESET} Installed Claude Code skill to $SKILL_DIR"
 
-# 4. Optional: install WebFetch hook
+# 4. Hook selection
 echo ""
-read -p "Install WebFetch hook for current project? (blocks WebFetch, redirects to freeloader) [y/N] " install_hook
-if [[ "$install_hook" =~ ^[Yy]$ ]]; then
+echo "${BOLD}Claude Code hooks (optional):${RESET}"
+echo "  1) block-webfetch   — hard-blocks WebFetch, forces freeloader (strongest)"
+echo "  2) suggest-webfetch — allows WebFetch but hints freeloader (softer)"
+echo "  3) intercept-read   — blocks Read on files >10KB, forces freeloader (recommended)"
+echo "  4) all of the above"
+echo "  5) none"
+echo ""
+read -p "Install hooks for current project? [1-5, default=5] " hook_choice
+
+install_hook() {
+  local src="$1"
+  local dst=".claude/hooks/$(basename "$src")"
   mkdir -p ".claude/hooks"
-  cp hooks/block-webfetch.sh .claude/hooks/block-webfetch.sh
-  chmod +x .claude/hooks/block-webfetch.sh
-  echo "${GREEN}✓${RESET} Installed hook to .claude/hooks/block-webfetch.sh"
-  echo "   Add this to your .claude/settings.local.json:"
-  cat << 'EOF'
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "WebFetch",
-        "hooks": [{ "type": "command", "command": ".claude/hooks/block-webfetch.sh" }]
-      }
-    ]
-  }
-EOF
+  cp "hooks/$src" "$dst"
+  chmod +x "$dst"
+  echo "${GREEN}✓${RESET} Installed $dst"
+}
+
+case "$hook_choice" in
+  1)
+    install_hook "block-webfetch.sh"
+    SHOW_SETTINGS=1
+    WEBFETCH_HOOK=".claude/hooks/block-webfetch.sh"
+    ;;
+  2)
+    install_hook "suggest-webfetch.sh"
+    SHOW_SETTINGS=1
+    WEBFETCH_HOOK=".claude/hooks/suggest-webfetch.sh"
+    ;;
+  3)
+    install_hook "intercept-read.sh"
+    SHOW_SETTINGS=1
+    READ_HOOK=".claude/hooks/intercept-read.sh"
+    ;;
+  4)
+    install_hook "block-webfetch.sh"
+    install_hook "intercept-read.sh"
+    SHOW_SETTINGS=1
+    WEBFETCH_HOOK=".claude/hooks/block-webfetch.sh"
+    READ_HOOK=".claude/hooks/intercept-read.sh"
+    ;;
+  *)
+    echo "   Skipping hooks."
+    ;;
+esac
+
+if [ -n "$SHOW_SETTINGS" ]; then
+  echo ""
+  echo "   Add the following to your .claude/settings.local.json:"
+  echo ""
+  echo '   "hooks": {'
+  echo '     "PreToolUse": ['
+  if [ -n "$WEBFETCH_HOOK" ]; then
+    echo "       { \"matcher\": \"WebFetch\", \"hooks\": [{ \"type\": \"command\", \"command\": \"$WEBFETCH_HOOK\" }] },"
+  fi
+  if [ -n "$READ_HOOK" ]; then
+    echo "       { \"matcher\": \"Read\", \"hooks\": [{ \"type\": \"command\", \"command\": \"$READ_HOOK\" }] }"
+  fi
+  echo '     ]'
+  echo '   }'
 fi
 
 # 5. Remind about CLAUDE.md
@@ -69,3 +112,8 @@ echo "${BOLD}Last step:${RESET} add the Token Savings Rule to your project's CLA
 echo "   cat CLAUDE.md.snippet >> /path/to/your/project/CLAUDE.md"
 echo ""
 echo "${GREEN}Done!${RESET} Test it: echo 'hello world' | freeloader 'repeat back what I said'"
+echo ""
+echo "Other commands:"
+echo "   freeloader --list-providers   check API key status"
+echo "   freeloader --stats            show cumulative token savings"
+echo "   freeloader --discover         find missed savings in session history"
