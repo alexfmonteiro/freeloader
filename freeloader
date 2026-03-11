@@ -7,35 +7,104 @@ freeloader — offload file/web/log parsing to free cloud LLMs (Gemini/Groq) ins
 Claude tokens on content you only need to extract or summarize.
 
 Usage:
-  freeloader '<instructions>' [<file_or_text_or_->]
+  freeloader '<instructions>' [<file_path_or_->]
   echo "data" | freeloader '<instructions>'
   curl -s https://example.com | freeloader '<instructions>'
   freeloader --list-providers
+  freeloader --stats
+  freeloader --discover
 """
 
 import sys
 import json
 import argparse
 import os
+import re
 import time
 import requests
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from collections import Counter
 
+# ── Paths ──────────────────────────────────────────────────────────────────────
 CONFIG_PATH = os.path.expanduser("~/.config/freeloader/config.json")
+LEGACY_CONFIG_PATH = os.path.expanduser("~/.claude/local-parse-config.json")
+TEE_DIR = Path.home() / ".local" / "share" / "freeloader" / "tee"
+STATS_FILE = Path.home() / ".local" / "share" / "freeloader" / "stats.json"
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+# ── Limits ─────────────────────────────────────────────────────────────────────
 DEFAULT_TIMEOUT = 300
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
+DEFAULT_MAX_TOKENS = 1000  # caps LLM response to force brevity; overridable per provider
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
     "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
     "groq": 400_000,      # Groq Llama 4 Scout: ~100K tokens effective
 }
 DEFAULT_MAX_CHARS = 200_000
+TEE_MAX_FILES = 20
+CHARS_PER_TOKEN = 4  # rough estimate for savings tracking
 
+# ── Bad-distillation detection ──────────────────────────────────────────────────
+# If the LLM response contains these phrases, it failed to process the input usefully.
+BAD_DISTILLATION_PHRASES = [
+    "please provide",
+    "i cannot",
+    "i don't have",
+    "i do not have",
+    "insufficient information",
+    "unable to",
+    "no content provided",
+    "no information provided",
+    "i need more",
+    "could you please",
+    "as an ai",
+    "i'm unable",
+    "i am unable",
+    "without more context",
+    "cannot determine",
+    "not enough information",
+]
+
+# ── Interactive passthrough detection ──────────────────────────────────────────
+# If input ends with these patterns, pass through raw — don't send to an LLM.
+INTERACTIVE_TAIL_PATTERNS = [
+    r"\[Y/n\]\s*$",
+    r"\[y/N\]\s*$",
+    r"\[Y/N\]\s*$",
+    r"[Pp]assword:\s*$",
+    r"[Ee]nter passphrase",
+    r"\(yes/no\)\s*$",
+    r"Press any key",
+    r"Continue\? ",
+    r"Are you sure",
+]
+
+# ── System prompt ──────────────────────────────────────────────────────────────
+# Framed for the actual consumer: a paid AI coding assistant, not a human.
+# This nudges the free LLM toward machine-readable brevity.
+SYSTEM_PROMPT_TEMPLATE = (
+    "You are a precise extraction and summarization tool. "
+    "Your output is consumed DIRECTLY by a paid AI assistant (Claude) as part of its context "
+    "window — not by a human. Rules:\n"
+    "- Be maximally concise. Every output token costs money.\n"
+    "- Output ONLY what was asked for. No preamble, no explanation, no 'here is the result'.\n"
+    "- Plain text preferred. Use minimal markdown only if it genuinely aids structure (tables, lists).\n"
+    "- If extracting data, use the most compact representation that preserves meaning.\n"
+    "- If nothing relevant exists in the input, output exactly: [nothing found]\n"
+    "- Never apologize, explain limitations, or ask for clarification.\n\n"
+    "Task: {instructions}"
+)
+
+OPUS_COST_PER_M = 15.0  # $/M input tokens at Opus pricing
+
+
+# ── Config ─────────────────────────────────────────────────────────────────────
 
 def load_config():
-    # Support legacy path (~/.claude/local-parse-config.json) for migration
-    legacy_path = os.path.expanduser("~/.claude/local-parse-config.json")
-    path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else legacy_path
+    path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else LEGACY_CONFIG_PATH
     try:
         with open(path, "r") as f:
             return json.load(f)
@@ -48,8 +117,11 @@ def list_providers():
     config = load_config()
     for p in config["providers"]:
         key_status = "configured" if p["api_key"] and not p["api_key"].startswith("YOUR_") else "NOT SET"
-        print(f"  {p['name']:10s}  model={p['model']}  key={key_status}")
+        max_tok = p.get("max_tokens", DEFAULT_MAX_TOKENS)
+        print(f"  {p['name']:10s}  model={p['model']}  max_tokens={max_tok}  key={key_status}")
 
+
+# ── Content helpers ────────────────────────────────────────────────────────────
 
 def truncate_content(content, provider_name):
     limit = MAX_CONTENT_CHARS.get(provider_name, DEFAULT_MAX_CHARS)
@@ -58,11 +130,224 @@ def truncate_content(content, provider_name):
     return content[:limit], True
 
 
+def is_bad_distillation(result: str, content: str) -> bool:
+    """Return True if the LLM response looks useless — trigger fallback to next provider."""
+    result_lower = result.lower().strip()
+    for phrase in BAD_DISTILLATION_PHRASES:
+        if phrase in result_lower:
+            return True
+    # Suspiciously tiny response for non-trivial input
+    if len(content) > 1000 and len(result.strip()) < 15:
+        return True
+    return False
+
+
+def is_interactive_input(content: str) -> bool:
+    """Return True if input ends with an interactive prompt — pass through without LLM."""
+    tail = content[-500:]
+    for pattern in INTERACTIVE_TAIL_PATTERNS:
+        if re.search(pattern, tail, re.IGNORECASE | re.MULTILINE):
+            return True
+    return False
+
+
+def read_content(source):
+    if source is None or source == "-":
+        return sys.stdin.read()
+    try:
+        with open(source, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        return source
+
+
+# ── Tee (raw output recovery) ──────────────────────────────────────────────────
+
+def save_tee(content: str) -> Path:
+    """Save raw content to tee dir so it can be retrieved after provider failure."""
+    TEE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    tee_file = TEE_DIR / f"freeloader-{ts}.txt"
+    tee_file.write_text(content, encoding="utf-8")
+    # Rotate: keep only the last TEE_MAX_FILES files
+    files = sorted(TEE_DIR.glob("freeloader-*.txt"))
+    for old in files[:-TEE_MAX_FILES]:
+        old.unlink(missing_ok=True)
+    return tee_file
+
+
+# ── Stats tracking ─────────────────────────────────────────────────────────────
+
+def track_stats(input_chars: int, output_chars: int, provider: str):
+    """Append a stats entry. Best-effort — never blocks execution."""
+    try:
+        STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        stats = []
+        if STATS_FILE.exists():
+            try:
+                stats = json.loads(STATS_FILE.read_text())
+            except (json.JSONDecodeError, OSError):
+                stats = []
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "provider": provider,
+            "input_chars": input_chars,
+            "output_chars": output_chars,
+            "tokens_consumed": input_chars // CHARS_PER_TOKEN,
+            "tokens_saved": max(0, (input_chars - output_chars) // CHARS_PER_TOKEN),
+        }
+        stats.append(entry)
+        if len(stats) > 1000:
+            stats = stats[-1000:]
+        STATS_FILE.write_text(json.dumps(stats, indent=2))
+    except OSError:
+        pass
+
+
+def show_stats():
+    if not STATS_FILE.exists():
+        print("No stats yet. Run some freeloader tasks first.")
+        return
+    try:
+        stats = json.loads(STATS_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        print("Stats file unreadable.")
+        return
+    if not stats:
+        print("No stats recorded yet.")
+        return
+
+    total_saved = sum(e.get("tokens_saved", 0) for e in stats)
+    total_consumed = sum(e.get("tokens_consumed", 0) for e in stats)
+    total_calls = len(stats)
+    provider_counts = Counter(e.get("provider", "?") for e in stats)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    recent = [e for e in stats if e.get("ts", "") >= cutoff]
+    recent_saved = sum(e.get("tokens_saved", 0) for e in recent)
+    total_cost_saved = total_saved / 1_000_000 * OPUS_COST_PER_M
+
+    print("freeloader stats")
+    print("────────────────")
+    print(f"Total calls:        {total_calls:,}")
+    print(f"Tokens routed out:  {total_consumed:,}")
+    print(f"Tokens saved:       {total_saved:,}  (~${total_cost_saved:.2f} at Opus pricing)")
+    print(f"Last 30 days saved: {recent_saved:,} tokens")
+    print()
+    print("By provider:")
+    for prov, count in provider_counts.most_common():
+        print(f"  {prov:12s}  {count:,} calls")
+
+
+# ── Discover missed savings ────────────────────────────────────────────────────
+
+def _find_tool_uses(obj, results=None):
+    """Recursively find all tool_use blocks in a JSON object."""
+    if results is None:
+        results = []
+    if isinstance(obj, dict):
+        if obj.get("type") == "tool_use":
+            results.append(obj)
+        for v in obj.values():
+            _find_tool_uses(v, results)
+    elif isinstance(obj, list):
+        for item in obj:
+            _find_tool_uses(item, results)
+    return results
+
+
+def discover_missed_savings():
+    """Scan Claude Code session JSONL logs for Read/WebFetch/Grep calls that bypassed freeloader."""
+    if not CLAUDE_PROJECTS_DIR.exists():
+        print("No Claude Code session data found at ~/.claude/projects/")
+        return
+
+    jsonl_files = list(CLAUDE_PROJECTS_DIR.rglob("*.jsonl"))
+    if not jsonl_files:
+        print("No session logs found.")
+        return
+
+    missed_reads = []
+    missed_fetches = []
+    missed_greps = []
+
+    for jf in jsonl_files:
+        try:
+            with open(jf, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    for tool in _find_tool_uses(obj):
+                        name = tool.get("name", "")
+                        inp = tool.get("input", {})
+                        if name == "Read":
+                            fp = inp.get("file_path", "")
+                            if fp:
+                                try:
+                                    size = os.path.getsize(fp)
+                                    if size > 10_000:
+                                        missed_reads.append({"path": fp, "size": size})
+                                except OSError:
+                                    pass
+                        elif name == "WebFetch":
+                            url = inp.get("url", "")
+                            if url:
+                                missed_fetches.append({"url": url})
+                        elif name == "Grep":
+                            pattern = inp.get("pattern", "")
+                            if pattern:
+                                missed_greps.append({"pattern": pattern, "path": inp.get("path", "")})
+        except OSError:
+            continue
+
+    total_ops = len(missed_reads) + len(missed_fetches) + len(missed_greps)
+    if total_ops == 0:
+        print("No missed savings found in session history.")
+        return
+
+    # Rough token estimates: read=file_size/4, fetch=10K tokens avg, grep=2K tokens avg
+    est_tokens = (
+        sum(r["size"] // CHARS_PER_TOKEN for r in missed_reads)
+        + len(missed_fetches) * 10_000
+        + len(missed_greps) * 2_000
+    )
+    # Freeloader would compress to ~5% of original
+    est_saved = int(est_tokens * 0.90)
+    est_cost = est_saved / 1_000_000 * OPUS_COST_PER_M
+
+    print("Missed savings in Claude Code session history")
+    print("─────────────────────────────────────────────")
+    print(f"Large file reads (>10KB) bypassing freeloader: {len(missed_reads)}")
+    print(f"WebFetch calls bypassing freeloader:           {len(missed_fetches)}")
+    print(f"Grep calls that could use freeloader:          {len(missed_greps)}")
+    print()
+    print(f"Estimated tokens that could have been saved:  ~{est_saved:,}")
+    print(f"Estimated cost saved (at Opus pricing):       ~${est_cost:.2f}")
+    print()
+    if missed_reads:
+        print(f"Largest files read directly (top 5):")
+        for item in sorted(missed_reads, key=lambda x: x["size"], reverse=True)[:5]:
+            print(f"  {item['size'] // 1024:>6}KB  {item['path']}")
+    if missed_fetches:
+        print(f"WebFetch URLs (up to 5):")
+        for item in missed_fetches[:5]:
+            print(f"  {item['url']}")
+
+
+# ── LLM calls ─────────────────────────────────────────────────────────────────
+
 def call_llm(provider, instructions, content):
     content, was_truncated = truncate_content(content, provider["name"])
     if was_truncated:
         instructions += "\n\nNOTE: The input was truncated to fit context limits. Work with what is provided."
         print(f"[{provider['name']}] input truncated to {len(content):,} chars", file=sys.stderr)
+
+    max_tokens = provider.get("max_tokens", DEFAULT_MAX_TOKENS)
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(instructions=instructions)
 
     headers = {
         "Content-Type": "application/json",
@@ -71,10 +356,11 @@ def call_llm(provider, instructions, content):
     payload = {
         "model": provider["model"],
         "messages": [
-            {"role": "system", "content": instructions},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": content},
         ],
         "temperature": 0.1,
+        "max_tokens": max_tokens,
         "stream": False,
     }
     r = requests.post(
@@ -110,8 +396,14 @@ def call_with_fallback(providers, instructions, content):
         if not p["api_key"] or p["api_key"].startswith("YOUR_"):
             errors.append((p["name"], "API key not configured"))
             continue
+        print(f"[freeloader] querying {p['name']}...", file=sys.stderr)
         try:
             result = call_with_retry(p, instructions, content)
+            # Bad-distillation guard: if response looks useless, try next provider
+            if is_bad_distillation(result, content):
+                print(f"[{p['name']}] response looks unhelpful, trying next provider...", file=sys.stderr)
+                errors.append((p["name"], "bad distillation"))
+                continue
             return result, p["name"]
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else "?"
@@ -124,21 +416,17 @@ def call_with_fallback(providers, instructions, content):
             errors.append((p["name"], str(e)))
             print(f"[{p['name']}] error, trying next provider...", file=sys.stderr)
 
+    # All providers failed — save raw content to tee for recovery
+    tee_path = save_tee(content)
     print("All providers failed:", file=sys.stderr)
     for name, err in errors:
         print(f"  {name}: {err}", file=sys.stderr)
+    print(f"[freeloader] raw input saved to: {tee_path}", file=sys.stderr)
+    print(f"[freeloader] recover with: cat {tee_path}", file=sys.stderr)
     sys.exit(1)
 
 
-def read_content(source):
-    if source is None or source == "-":
-        return sys.stdin.read()
-    try:
-        with open(source, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except (FileNotFoundError, IsADirectoryError, PermissionError):
-        return source
-
+# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
@@ -147,6 +435,8 @@ def main():
         epilog=__doc__,
     )
     parser.add_argument("--list-providers", action="store_true", help="List configured providers and exit")
+    parser.add_argument("--stats", action="store_true", help="Show token savings statistics")
+    parser.add_argument("--discover", action="store_true", help="Scan Claude Code session history for missed savings")
     parser.add_argument("instructions", nargs="?", help="What to extract or summarize")
     parser.add_argument(
         "source",
@@ -161,6 +451,14 @@ def main():
         list_providers()
         return
 
+    if args.stats:
+        show_stats()
+        return
+
+    if args.discover:
+        discover_missed_savings()
+        return
+
     if not args.instructions:
         parser.error("instructions are required (pass as first positional argument)")
 
@@ -170,8 +468,15 @@ def main():
         print("Error: empty input", file=sys.stderr)
         sys.exit(1)
 
+    # Interactive passthrough — don't LLM-process prompts expecting user input
+    if is_interactive_input(content):
+        print(content, end="")
+        return
+
     config = load_config()
     result, provider_used = call_with_fallback(config["providers"], args.instructions, content)
+
+    track_stats(len(content), len(result), provider_used)
     print(f"[via {provider_used}]", file=sys.stderr)
     print(result)
 
