@@ -287,6 +287,22 @@ class TestTruncateContent:
         # Groq has a smaller effective context
         assert fl.MAX_CONTENT_CHARS["groq"] < fl.MAX_CONTENT_CHARS["gemini"]
 
+    def test_mistral_limit_enforced(self):
+        big = "x" * (fl.MAX_CONTENT_CHARS["mistral"] + 500)
+        result, truncated = fl.truncate_content(big, "mistral")
+        assert truncated
+        assert len(result) == fl.MAX_CONTENT_CHARS["mistral"]
+
+    def test_cerebras_limit_enforced(self):
+        big = "x" * (fl.MAX_CONTENT_CHARS["cerebras"] + 500)
+        result, truncated = fl.truncate_content(big, "cerebras")
+        assert truncated
+        assert len(result) == fl.MAX_CONTENT_CHARS["cerebras"]
+
+    def test_cerebras_limit_smaller_than_groq(self):
+        # Cerebras default context (8K) is much smaller than Groq
+        assert fl.MAX_CONTENT_CHARS["cerebras"] < fl.MAX_CONTENT_CHARS["groq"]
+
     def test_unknown_provider_uses_default(self):
         big = "x" * (fl.DEFAULT_MAX_CHARS + 500)
         result, truncated = fl.truncate_content(big, "unknown_provider_xyz")
@@ -361,18 +377,33 @@ class TestCallWithFallback:
 
     @patch("requests.post")
     def test_fallback_on_http_503(self, mock_post):
-        """First provider returns 503 → retry → exhausted → second provider succeeds."""
+        """First provider returns 503 → immediately tries second provider."""
         import requests as req
         err_resp = MagicMock()
         err_resp.status_code = 503
         http_err = req.exceptions.HTTPError(response=err_resp)
-        # 503 triggers MAX_RETRIES attempts on first provider, then second succeeds
-        mock_post.side_effect = [http_err, http_err, http_err, mock_response("1002, 1004, 1006")]
+        mock_post.side_effect = [http_err, mock_response("1002, 1004, 1006")]
         result, provider = fl.call_with_fallback(
             make_providers("gemini", "groq"), "list failed IDs", DATA_CSV
         )
         assert "1002" in result
         assert provider == "groq"
+        assert mock_post.call_count == 2  # exactly 1 fail + 1 success, no retries
+
+    @patch("requests.post")
+    def test_fallback_on_http_429(self, mock_post):
+        """Rate-limit (429) on first provider → immediately tries second, no sleep."""
+        import requests as req
+        err_resp = MagicMock()
+        err_resp.status_code = 429
+        http_err = req.exceptions.HTTPError(response=err_resp)
+        mock_post.side_effect = [http_err, mock_response("prod-db-01, prod-db-02")]
+        result, provider = fl.call_with_fallback(
+            make_providers("gemini", "groq"), "list DB hosts", CONFIG_YAML
+        )
+        assert "prod-db-01" in result
+        assert provider == "groq"
+        assert mock_post.call_count == 2  # no retries on same provider
 
     @patch("requests.post")
     def test_fallback_on_timeout(self, mock_post):

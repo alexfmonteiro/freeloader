@@ -20,7 +20,6 @@ import json
 import argparse
 import os
 import re
-import time
 import requests
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -35,13 +34,13 @@ CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # ── Limits ─────────────────────────────────────────────────────────────────────
 DEFAULT_TIMEOUT = 300
-RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
-MAX_RETRIES = 3
 DEFAULT_MAX_TOKENS = 4000  # caps LLM response; overridable per provider in config
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
     "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
     "groq": 400_000,      # Groq Llama 4 Scout: ~100K tokens effective
+    "mistral": 500_000,   # Mistral Small 3.1: 128K tokens
+    "cerebras": 24_000,   # Cerebras default: 8K tokens (request 128K unlock for more)
 }
 DEFAULT_MAX_CHARS = 200_000
 TEE_MAX_FILES = 20
@@ -375,23 +374,6 @@ def call_llm(provider, instructions, content):
     return r.json()["choices"][0]["message"]["content"]
 
 
-def call_with_retry(provider, instructions, content):
-    last_error = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            return call_llm(provider, instructions, content)
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response is not None else 0
-            if status in RETRYABLE_STATUSES and attempt < MAX_RETRIES - 1:
-                wait = 2 ** attempt
-                print(f"[{provider['name']}] {status}, retrying in {wait}s... ({attempt + 1}/{MAX_RETRIES})", file=sys.stderr)
-                time.sleep(wait)
-                last_error = e
-            else:
-                raise
-    raise last_error
-
-
 def call_with_fallback(providers, instructions, content):
     errors = []
     for p in providers:
@@ -400,7 +382,7 @@ def call_with_fallback(providers, instructions, content):
             continue
         print(f"[freeloader] querying {p['name']}...", file=sys.stderr)
         try:
-            result = call_with_retry(p, instructions, content)
+            result = call_llm(p, instructions, content)
             # Bad-distillation guard: if response looks useless, try next provider
             if is_bad_distillation(result, content):
                 print(f"[{p['name']}] response looks unhelpful, trying next provider...", file=sys.stderr)

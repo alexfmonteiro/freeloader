@@ -2,7 +2,7 @@
 
 **Offload Claude's parsing tasks to free LLMs. Save tokens, preserve context.**
 
-When you ask Claude to read a log, summarize a file, or scrape a webpage, it burns expensive Opus tokens on work that a free model handles just as well. `freeloader` intercepts those tasks and routes them to Gemini 2.5 Flash (primary) or Groq Llama 4 Scout (fallback) — both free-tier APIs.
+When you ask Claude to read a log, summarize a file, or scrape a webpage, it burns expensive Opus tokens on work that a free model handles just as well. `freeloader` intercepts those tasks and routes them to free-tier LLMs — trying each in order until one succeeds.
 
 ```bash
 freeloader 'summarize errors' /var/log/app.log
@@ -27,8 +27,10 @@ cd freeloader
 ```
 
 Then add your API keys to `~/.config/freeloader/config.json`:
-- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free, 1500 req/day)
-- **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 14.4K req/day)
+- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free, 1,500 req/day)
+- **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 14,400 req/day)
+- **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys (free, ~1B tokens/month)
+- **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys (free, 1M tokens/day)
 
 ## Usage
 
@@ -123,9 +125,11 @@ Track your savings with `freeloader --stats`. Find past missed savings with `fre
 | Provider | Model | Context | Free tier |
 |----------|-------|---------|-----------|
 | Gemini (primary) | gemini-2.5-flash | 1M tokens | 1,500 req/day |
-| Groq (fallback) | llama-4-scout-17b-16e-instruct | 512K tokens | 14,400 req/day |
+| Groq | llama-4-scout-17b-16e-instruct | 512K tokens | 14,400 req/day |
+| Mistral | mistral-small-latest | 128K tokens | ~1B tokens/month |
+| Cerebras | llama3.3-70b | 8K tokens (128K unlockable) | 1M tokens/day |
 
-Providers are tried in order. Transient errors (503, 429, 500) are retried with exponential backoff. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
+Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
 
 ## Configuration
 
@@ -139,14 +143,28 @@ Providers are tried in order. Transient errors (503, 429, 500) are retried with 
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "model": "gemini-2.5-flash",
       "api_key": "YOUR_GEMINI_API_KEY",
-      "max_tokens": 1000
+      "max_tokens": 4000
     },
     {
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
       "model": "llama-4-scout-17b-16e-instruct",
       "api_key": "YOUR_GROQ_API_KEY",
-      "max_tokens": 1000
+      "max_tokens": 4000
+    },
+    {
+      "name": "mistral",
+      "base_url": "https://api.mistral.ai/v1",
+      "model": "mistral-small-latest",
+      "api_key": "YOUR_MISTRAL_API_KEY",
+      "max_tokens": 4000
+    },
+    {
+      "name": "cerebras",
+      "base_url": "https://api.cerebras.ai/v1",
+      "model": "llama3.3-70b",
+      "api_key": "YOUR_CEREBRAS_API_KEY",
+      "max_tokens": 4000
     }
   ]
 }
