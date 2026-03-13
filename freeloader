@@ -40,7 +40,7 @@ MAX_CONTENT_CHARS = {
     "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
     "groq": 400_000,      # Groq Llama 4 Scout: ~100K tokens effective
     "mistral": 500_000,   # Mistral Small 3.1: 128K tokens
-    "cerebras": 24_000,   # Cerebras default: 8K tokens (request 128K unlock for more)
+    "cerebras": 24_000,   # Cerebras Qwen 3 235B: 8K tokens default
 }
 DEFAULT_MAX_CHARS = 200_000
 TEE_MAX_FILES = 20
