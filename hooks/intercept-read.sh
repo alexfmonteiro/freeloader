@@ -15,6 +15,12 @@
 MIN_SIZE_KB=${FREELOADER_MIN_SIZE_KB:-10}
 MIN_SIZE_BYTES=$((MIN_SIZE_KB * 1024))
 
+# Kill switch: touch ~/.config/freeloader/disabled to bypass all hooks
+if [ -f "$HOME/.config/freeloader/disabled" ]; then
+  jq -n '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }'
+  exit 0
+fi
+
 INPUT=$(cat -)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 

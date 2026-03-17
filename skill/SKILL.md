@@ -30,6 +30,7 @@ Delegate to a free cloud LLM so you only see a concise result, saving Claude tok
 - You need to understand code structure, logic, or architecture (use Read/Grep directly)
 - The user explicitly asks you to read and reason about the file yourself
 - You need structured output that feeds directly into another tool call
+- You are reading a file in order to edit it (e.g., locating an insertion point, understanding existing code before making a change) — use Read directly so you get raw content you can act on
 
 ## How to use
 

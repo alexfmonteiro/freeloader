@@ -8,6 +8,12 @@
 #     ]
 #   }
 
+# Kill switch: touch ~/.config/freeloader/disabled to bypass all hooks
+if [ -f "$HOME/.config/freeloader/disabled" ]; then
+  jq -n '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }'
+  exit 0
+fi
+
 jq -n '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
