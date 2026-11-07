@@ -10,6 +10,7 @@ Usage:
   freeloader '<instructions>' [<file_path_or_->]
   echo "data" | freeloader '<instructions>'
   curl -s https://example.com | freeloader '<instructions>'
+  freeloader --text '<raw_text>' '<instructions>'
   freeloader --list-providers
   freeloader --stats
   freeloader --discover
@@ -158,8 +159,15 @@ def read_content(source):
     try:
         with open(source, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
-    except (FileNotFoundError, IsADirectoryError, PermissionError):
-        return source
+    except FileNotFoundError:
+        print(f"Error: file not found: {source}", file=sys.stderr)
+        sys.exit(2)
+    except IsADirectoryError:
+        print(f"Error: source is a directory: {source}", file=sys.stderr)
+        sys.exit(2)
+    except PermissionError:
+        print(f"Error: permission denied: {source}", file=sys.stderr)
+        sys.exit(2)
 
 
 # ── Tee (raw output recovery) ──────────────────────────────────────────────────
@@ -421,12 +429,13 @@ def main():
     parser.add_argument("--list-providers", action="store_true", help="List configured providers and exit")
     parser.add_argument("--stats", action="store_true", help="Show token savings statistics")
     parser.add_argument("--discover", action="store_true", help="Scan Claude Code session history for missed savings")
+    parser.add_argument("--text", help="Use TEXT as input instead of a file")
     parser.add_argument("instructions", nargs="?", help="What to extract or summarize")
     parser.add_argument(
         "source",
         nargs="?",
         default=None,
-        help="File path, raw text, or '-' for stdin (omit to read from stdin)",
+        help="File path or '-' for stdin (omit to read from stdin)",
     )
 
     args = parser.parse_args()
@@ -446,7 +455,10 @@ def main():
     if not args.instructions:
         parser.error("instructions are required (pass as first positional argument)")
 
-    content = read_content(args.source)
+    if args.text:
+        content = args.text
+    else:
+        content = read_content(args.source)
 
     if not content.strip():
         print("Error: empty input", file=sys.stderr)

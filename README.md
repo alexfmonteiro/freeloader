@@ -41,6 +41,9 @@ freeloader '<instructions>' '<file_path>'
 # Pipe from stdin
 cat large.log | freeloader '<instructions>'
 
+# Pass raw text directly
+freeloader --text '<raw_text>' '<instructions>'
+
 # Web content
 curl -s https://example.com | freeloader 'extract the main content'
 
@@ -180,7 +183,7 @@ Add more providers by appending to the array. Any OpenAI-compatible API works.
 uv run --with pytest --with requests pytest tests/ -v
 ```
 
-74 tests covering: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, and end-to-end scenarios with synthetic log/config/CSV/git data.
+76 tests covering: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
 
 ## Requirements
 
