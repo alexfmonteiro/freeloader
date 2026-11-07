@@ -32,6 +32,24 @@ Then add your API keys to `~/.config/freeloader/config.json`:
 - **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys (free, ~1B tokens/month)
 - **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys (free, 1M tokens/day)
 
+## Install as a Claude Code plugin
+
+The repo is also a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). In your shell:
+
+```bash
+claude plugin marketplace add alexfmonteiro/freeloader
+claude plugin install freeloader@freeloader
+```
+
+The plugin installs:
+- The `freeloader` skill
+- The `suggest-webfetch` hook (WebFetch runs, with a freeloader tip)
+- The `intercept-read` hook (blocks Read on files >10KB)
+
+Hooks apply in every project where the plugin is enabled. Bypass them with `touch ~/.config/freeloader/disabled`, or turn the plugin off with `claude plugin disable freeloader`.
+
+A plugin can't place files in your home directory, so you still run `./install.sh` for the `freeloader` CLI in `~/.local/bin` and the API-key config in `~/.config/freeloader/config.json`. Answer `5` (none) at the hook prompt, because the plugin already provides the hooks. The installer also copies the skill to `~/.claude/skills/freeloader`. Delete that copy if you use the plugin, so the skill doesn't load twice. The `CLAUDE.md` rule is still a manual step.
+
 ## Usage
 
 ```bash
