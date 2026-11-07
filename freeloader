@@ -455,7 +455,9 @@ def main():
     if not args.instructions:
         parser.error("instructions are required (pass as first positional argument)")
 
-    if args.text:
+    if args.text is not None:
+        if args.source is not None:
+            parser.error("--text cannot be combined with a file path")
         content = args.text
     else:
         content = read_content(args.source)

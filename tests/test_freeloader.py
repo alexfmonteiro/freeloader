@@ -326,18 +326,20 @@ class TestReadContent:
         f.write_text("file content")
         assert fl.read_content(str(f)) == "file content"
 
-    def test_missing_file_exits_2(self, tmp_path):
+    def test_missing_file_exits_2(self, tmp_path, capsys):
         missing = tmp_path / "missing.txt"
         with pytest.raises(SystemExit) as exc:
             fl.read_content(str(missing))
         assert exc.value.code == 2
+        assert "file not found" in capsys.readouterr().err
 
-    def test_directory_exits_2(self, tmp_path):
+    def test_directory_exits_2(self, tmp_path, capsys):
         with pytest.raises(SystemExit) as exc:
             fl.read_content(str(tmp_path))
         assert exc.value.code == 2
+        assert "source is a directory" in capsys.readouterr().err
 
-    def test_unreadable_file_exits_2(self, tmp_path):
+    def test_unreadable_file_exits_2(self, tmp_path, capsys):
         f = tmp_path / "secret.txt"
         f.write_text("secret")
         f.chmod(0o000)
@@ -345,6 +347,7 @@ class TestReadContent:
             with pytest.raises(SystemExit) as exc:
                 fl.read_content(str(f))
             assert exc.value.code == 2
+            assert "permission denied" in capsys.readouterr().err
         finally:
             f.chmod(0o644)
 
@@ -823,6 +826,19 @@ class TestMain:
         mock_load_config.return_value = {"providers": make_providers("gemini")}
         missing = tmp_path / "missing.log"
         with patch.object(sys, "argv", ["freeloader", "summarize", str(missing)]):
+            with pytest.raises(SystemExit) as exc:
+                fl.main()
+        assert exc.value.code == 2
+        mock_call_with_fallback.assert_not_called()
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_text_flag_with_path_errors(self, mock_load_config, mock_call_with_fallback, tmp_path):
+        """--text plus a file path is ambiguous and must fail without calling any provider."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        f = tmp_path / "file.txt"
+        f.write_text("file content")
+        with patch.object(sys, "argv", ["freeloader", "summarize", str(f), "--text=raw text"]):
             with pytest.raises(SystemExit) as exc:
                 fl.main()
         assert exc.value.code == 2
