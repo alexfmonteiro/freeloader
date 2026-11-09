@@ -27,8 +27,8 @@ cd freeloader
 ```
 
 Then add your API keys to `~/.config/freeloader/config.json`:
-- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free, 1,500 req/day)
-- **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 14,400 req/day)
+- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free tier, limits shown in AI Studio)
+- **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 1,000 req/day)
 - **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys (free, ~1B tokens/month)
 - **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys (free, 1M tokens/day)
 
@@ -124,10 +124,10 @@ Track your savings with `freeloader --stats`. Find past missed savings with `fre
 
 | Provider | Model | Context | Free tier |
 |----------|-------|---------|-----------|
-| Gemini (primary) | gemini-2.5-flash | 1M tokens | 1,500 req/day |
-| Groq | llama-4-scout-17b-16e-instruct | 512K tokens | 14,400 req/day |
+| Gemini (primary) | gemini-3.8-flash | 1M tokens | Limits shown in AI Studio |
+| Groq | openai/gpt-oss-120b | 131K tokens | 1,000 req/day, 8K tokens/min |
 | Mistral | mistral-small-latest | 128K tokens | ~1B tokens/month |
-| Cerebras | llama3.3-70b | 8K tokens (128K unlockable) | 1M tokens/day |
+| Cerebras | gpt-oss-120b | 65K tokens (131K paid) | 1M tokens/day |
 
 Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
 
@@ -141,14 +141,14 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "gemini",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.8-flash",
       "api_key": "YOUR_GEMINI_API_KEY",
       "max_tokens": 4000
     },
     {
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
-      "model": "llama-4-scout-17b-16e-instruct",
+      "model": "openai/gpt-oss-120b",
       "api_key": "YOUR_GROQ_API_KEY",
       "max_tokens": 4000
     },
@@ -162,7 +162,7 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "cerebras",
       "base_url": "https://api.cerebras.ai/v1",
-      "model": "llama3.3-70b",
+      "model": "gpt-oss-120b",
       "api_key": "YOUR_CEREBRAS_API_KEY",
       "max_tokens": 4000
     }
@@ -173,6 +173,10 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 `max_tokens` caps the response length per provider — forcing brevity and reducing the tokens that do land in Claude's context. Increase it if you need longer summaries.
 
 Add more providers by appending to the array. Any OpenAI-compatible API works.
+
+### Upgrading
+
+`install.sh` never overwrites an existing `~/.config/freeloader/config.json`. When the default models change, edit the `model` values in your config by hand to match `config.template.json`.
 
 ## Testing
 
