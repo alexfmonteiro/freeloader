@@ -1,7 +1,7 @@
 {
   "name": "freeloader",
   "version": "0.1.0",
-  "description": "Offload Claude's parsing tasks to free LLMs: a skill plus PreToolUse hooks for Read and WebFetch",
+  "description": "Offload Claude's parsing tasks to free LLMs: a skill, plus opt-in PreToolUse hooks for Read and WebFetch",
   "author": {
     "name": "Alex Monteiro"
   },
