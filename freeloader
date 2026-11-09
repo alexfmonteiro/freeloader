@@ -37,10 +37,10 @@ DEFAULT_TIMEOUT = 300
 DEFAULT_MAX_TOKENS = 4000  # caps LLM response; overridable per provider in config
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
-    "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
-    "groq": 400_000,      # Groq Llama 4 Scout: ~100K tokens effective
+    "gemini": 3_500_000,  # Gemini 3.8 Flash: ~1M tokens
+    "groq": 500_000,      # Groq GPT OSS 120B: 131K tokens
     "mistral": 500_000,   # Mistral Small 3.1: 128K tokens
-    "cerebras": 24_000,   # Cerebras Qwen 3 235B: 8K tokens default
+    "cerebras": 240_000,  # Cerebras GPT OSS 120B: 65K tokens on free tier
 }
 DEFAULT_MAX_CHARS = 200_000
 TEE_MAX_FILES = 20

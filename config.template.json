@@ -3,14 +3,14 @@
     {
       "name": "gemini",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.8-flash",
       "api_key": "YOUR_GEMINI_API_KEY_HERE",
       "max_tokens": 4000
     },
     {
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
-      "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "model": "openai/gpt-oss-120b",
       "api_key": "YOUR_GROQ_API_KEY_HERE",
       "max_tokens": 4000
     },
@@ -24,7 +24,7 @@
     {
       "name": "cerebras",
       "base_url": "https://api.cerebras.ai/v1",
-      "model": "qwen-3-235b-a22b-instruct-2507",
+      "model": "gpt-oss-120b",
       "api_key": "YOUR_CEREBRAS_API_KEY_HERE",
       "max_tokens": 4000
     },
