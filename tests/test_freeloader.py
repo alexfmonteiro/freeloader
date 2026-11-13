@@ -310,6 +310,48 @@ class TestTruncateContent:
         assert len(result) == fl.DEFAULT_MAX_CHARS
 
 
+class TestReadContent:
+    """read_content() reads files/stdin and fails clearly on bad paths."""
+
+    def test_stdin_returns_input(self, monkeypatch):
+        monkeypatch.setattr(sys.stdin, "read", lambda: "stdin content")
+        assert fl.read_content("-") == "stdin content"
+
+    def test_none_reads_stdin(self, monkeypatch):
+        monkeypatch.setattr(sys.stdin, "read", lambda: "default stdin")
+        assert fl.read_content(None) == "default stdin"
+
+    def test_file_returns_content(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("file content")
+        assert fl.read_content(str(f)) == "file content"
+
+    def test_missing_file_exits_2(self, tmp_path, capsys):
+        missing = tmp_path / "missing.txt"
+        with pytest.raises(SystemExit) as exc:
+            fl.read_content(str(missing))
+        assert exc.value.code == 2
+        assert "file not found" in capsys.readouterr().err
+
+    def test_directory_exits_2(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            fl.read_content(str(tmp_path))
+        assert exc.value.code == 2
+        assert "source is a directory" in capsys.readouterr().err
+
+    def test_unreadable_file_exits_2(self, tmp_path, capsys):
+        f = tmp_path / "secret.txt"
+        f.write_text("secret")
+        f.chmod(0o000)
+        try:
+            with pytest.raises(SystemExit) as exc:
+                fl.read_content(str(f))
+            assert exc.value.code == 2
+            assert "permission denied" in capsys.readouterr().err
+        finally:
+            f.chmod(0o644)
+
+
 class TestFindToolUses:
     """_find_tool_uses() recursively extracts tool_use blocks from session JSONL objects."""
 
@@ -761,6 +803,47 @@ class TestScenarios:
 # ══════════════════════════════════════════════════════════════════════════════
 # CLI TESTS — subprocess calls against installed binary
 # ══════════════════════════════════════════════════════════════════════════════
+
+class TestMain:
+    """End-to-end tests for main() with mocked dependencies."""
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_text_flag_passes_raw_text(self, mock_load_config, mock_call_with_fallback, capsys):
+        """--text should bypass file reading and use the provided string."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        mock_call_with_fallback.return_value = ("result", "gemini")
+        with patch.object(sys, "argv", ["freeloader", "summarize", "--text=raw text"]):
+            fl.main()
+        mock_call_with_fallback.assert_called_once()
+        _, _, content = mock_call_with_fallback.call_args[0]
+        assert content == "raw text"
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_missing_path_exits_before_provider(self, mock_load_config, mock_call_with_fallback, tmp_path, capsys):
+        """A missing file path must exit with code 2 without calling any provider."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        missing = tmp_path / "missing.log"
+        with patch.object(sys, "argv", ["freeloader", "summarize", str(missing)]):
+            with pytest.raises(SystemExit) as exc:
+                fl.main()
+        assert exc.value.code == 2
+        mock_call_with_fallback.assert_not_called()
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_text_flag_with_path_errors(self, mock_load_config, mock_call_with_fallback, tmp_path):
+        """--text plus a file path is ambiguous and must fail without calling any provider."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        f = tmp_path / "file.txt"
+        f.write_text("file content")
+        with patch.object(sys, "argv", ["freeloader", "summarize", str(f), "--text=raw text"]):
+            with pytest.raises(SystemExit) as exc:
+                fl.main()
+        assert exc.value.code == 2
+        mock_call_with_fallback.assert_not_called()
+
 
 @pytest.mark.skipif(not BINARY.exists(), reason="freeloader not installed (~/.local/bin/freeloader)")
 class TestCLI:
