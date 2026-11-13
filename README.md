@@ -145,7 +145,7 @@ The installer offers three hook options:
 | Hook | File | Behavior |
 |------|------|----------|
 | **block-webfetch** | `hooks/block-webfetch.sh` | Hard-blocks WebFetch, Claude must use `curl \| freeloader` |
-| **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Allows WebFetch but adds a token-savings hint to Claude |
+| **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Lets WebFetch through the normal permission flow and adds a token-savings hint to Claude's context |
 | **intercept-read** | `hooks/intercept-read.sh` | Blocks Read on files >10KB, redirects to freeloader |
 
 Add to `.claude/settings.local.json`:
