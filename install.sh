@@ -45,7 +45,7 @@ fi
 # 3. Install Claude Code skill
 SKILL_DIR="$HOME/.claude/skills/freeloader"
 mkdir -p "$SKILL_DIR"
-cp "$FREELOADER_DIR/skill/SKILL.md" "$SKILL_DIR/SKILL.md"
+cp "$FREELOADER_DIR/skills/freeloader/SKILL.md" "$SKILL_DIR/SKILL.md"
 echo "${GREEN}✓${RESET} Installed Claude Code skill to $SKILL_DIR"
 
 # 4. Hook selection

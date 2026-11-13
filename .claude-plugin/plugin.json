@@ -1,0 +1,11 @@
+{
+  "name": "freeloader",
+  "version": "0.1.0",
+  "description": "Offload Claude's parsing tasks to free LLMs: a skill, plus opt-in PreToolUse hooks for Read and WebFetch",
+  "author": {
+    "name": "Alex Monteiro"
+  },
+  "repository": "https://github.com/alexfmonteiro/freeloader",
+  "license": "MIT",
+  "keywords": ["tokens", "cost", "parsing", "free-llm"]
+}

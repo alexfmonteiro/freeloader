@@ -225,6 +225,32 @@ class TestBadDistillation:
         good = "1002: Connection timeout\n1004: Null constraint violation\n1006: Upstream job failed"
         assert not fl.is_bad_distillation(good, DATA_CSV)
 
+    def test_unable_to_mid_text_passes(self):
+        assert not fl.is_bad_distillation("3 errors: db unable to connect at 03:12; retry failed", "x" * 2000)
+
+    def test_i_cannot_mid_text_passes(self):
+        assert not fl.is_bad_distillation("Found: 'I cannot open file' error in worker-3", "x" * 2000)
+
+    def test_cannot_determine_mid_text_passes(self):
+        good = "1. 03:12 WARN Planner: cannot determine schema for 'orders', using default"
+        assert not fl.is_bad_distillation(good, "x" * 2000)
+
+    def test_please_provide_mid_text_passes(self):
+        good = "API returned 400: 'please provide a valid token' (3 times, 04:01-04:05)"
+        assert not fl.is_bad_distillation(good, "x" * 2000)
+
+    def test_refusal_after_markdown_prefix(self):
+        assert fl.is_bad_distillation("**I cannot help with that request.**", "x" * 2000)
+
+    def test_refusal_after_leading_whitespace(self):
+        assert fl.is_bad_distillation("\n\n  Please provide the content you want summarized.", "x" * 2000)
+
+    def test_nothing_found_valid_for_huge_input(self):
+        assert not fl.is_bad_distillation("[nothing found]", "x" * 1_000_000)
+
+    def test_nothing_found_with_whitespace(self):
+        assert not fl.is_bad_distillation("  [nothing found]\n", "x" * 2000)
+
 
 class TestInteractiveInput:
     """is_interactive_input() detects prompts requiring human keystrokes."""
@@ -308,6 +334,48 @@ class TestTruncateContent:
         result, truncated = fl.truncate_content(big, "unknown_provider_xyz")
         assert truncated
         assert len(result) == fl.DEFAULT_MAX_CHARS
+
+
+class TestReadContent:
+    """read_content() reads files/stdin and fails clearly on bad paths."""
+
+    def test_stdin_returns_input(self, monkeypatch):
+        monkeypatch.setattr(sys.stdin, "read", lambda: "stdin content")
+        assert fl.read_content("-") == "stdin content"
+
+    def test_none_reads_stdin(self, monkeypatch):
+        monkeypatch.setattr(sys.stdin, "read", lambda: "default stdin")
+        assert fl.read_content(None) == "default stdin"
+
+    def test_file_returns_content(self, tmp_path):
+        f = tmp_path / "file.txt"
+        f.write_text("file content")
+        assert fl.read_content(str(f)) == "file content"
+
+    def test_missing_file_exits_2(self, tmp_path, capsys):
+        missing = tmp_path / "missing.txt"
+        with pytest.raises(SystemExit) as exc:
+            fl.read_content(str(missing))
+        assert exc.value.code == 2
+        assert "file not found" in capsys.readouterr().err
+
+    def test_directory_exits_2(self, tmp_path, capsys):
+        with pytest.raises(SystemExit) as exc:
+            fl.read_content(str(tmp_path))
+        assert exc.value.code == 2
+        assert "source is a directory" in capsys.readouterr().err
+
+    def test_unreadable_file_exits_2(self, tmp_path, capsys):
+        f = tmp_path / "secret.txt"
+        f.write_text("secret")
+        f.chmod(0o000)
+        try:
+            with pytest.raises(SystemExit) as exc:
+                fl.read_content(str(f))
+            assert exc.value.code == 2
+            assert "permission denied" in capsys.readouterr().err
+        finally:
+            f.chmod(0o644)
 
 
 class TestFindToolUses:
@@ -444,6 +512,68 @@ class TestCallWithFallback:
                 assert len(tee_files) == 1
                 saved = tee_files[0].read_text()
                 assert "ERROR" in saved  # raw input preserved
+
+    @staticmethod
+    def raw_response(body):
+        m = MagicMock()
+        m.json.return_value = body
+        m.raise_for_status = MagicMock()
+        return m
+
+    MALFORMED_BODIES = {
+        "null_content": {"choices": [{"message": {"content": None}, "finish_reason": "length"}]},
+        "empty_choices": {"choices": []},
+        "missing_choices": {"error": {"message": "upstream error"}},
+    }
+
+    @pytest.mark.parametrize("kind", list(MALFORMED_BODIES))
+    @patch("requests.post")
+    def test_malformed_response_falls_through(self, mock_post, kind):
+        """Empty or malformed 200 responses → next provider is used."""
+        mock_post.side_effect = [
+            self.raw_response(self.MALFORMED_BODIES[kind]),
+            mock_response("1002: Connection timeout\n1004: Null constraint violation"),
+        ]
+        result, provider = fl.call_with_fallback(
+            make_providers("gemini", "groq"), "list failed jobs", DATA_CSV
+        )
+        assert "1002" in result
+        assert provider == "groq"
+        assert mock_post.call_count == 2
+
+    @pytest.mark.parametrize("kind", list(MALFORMED_BODIES))
+    @patch("requests.post")
+    def test_malformed_response_all_fail_writes_tee(self, mock_post, kind, capsys):
+        """When every provider returns a malformed response, tee is saved and exit code is 1."""
+        mock_post.side_effect = lambda *a, **kw: self.raw_response(self.MALFORMED_BODIES[kind])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tee_dir = Path(tmpdir)
+            with patch.object(fl, "TEE_DIR", tee_dir):
+                with pytest.raises(SystemExit) as exc:
+                    fl.call_with_fallback(make_providers("gemini", "groq"), "list errors", APP_LOG)
+                assert exc.value.code == 1
+                tee_files = list(tee_dir.glob("freeloader-*.txt"))
+                assert len(tee_files) == 1
+                assert "ERROR" in tee_files[0].read_text()
+        assert mock_post.call_count == 2
+        err = capsys.readouterr().err
+        if kind == "null_content":
+            assert "gemini: empty response (finish_reason=length)" in err
+        else:
+            assert "gemini: no choices in response" in err
+
+    @patch("requests.post")
+    def test_invalid_json_falls_through(self, mock_post):
+        """A non-JSON 200 body → next provider is used."""
+        bad = MagicMock()
+        bad.raise_for_status = MagicMock()
+        bad.json.side_effect = json.JSONDecodeError("Expecting value", "<html>", 0)
+        mock_post.side_effect = [bad, mock_response("prod-db-01, prod-db-02")]
+        result, provider = fl.call_with_fallback(
+            make_providers("gemini", "groq"), "list DB hosts", CONFIG_YAML
+        )
+        assert "prod-db-01" in result
+        assert provider == "groq"
 
     @patch("requests.post")
     def test_unconfigured_provider_skipped(self, mock_post):
@@ -761,6 +891,47 @@ class TestScenarios:
 # ══════════════════════════════════════════════════════════════════════════════
 # CLI TESTS — subprocess calls against installed binary
 # ══════════════════════════════════════════════════════════════════════════════
+
+class TestMain:
+    """End-to-end tests for main() with mocked dependencies."""
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_text_flag_passes_raw_text(self, mock_load_config, mock_call_with_fallback, capsys):
+        """--text should bypass file reading and use the provided string."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        mock_call_with_fallback.return_value = ("result", "gemini")
+        with patch.object(sys, "argv", ["freeloader", "summarize", "--text=raw text"]):
+            fl.main()
+        mock_call_with_fallback.assert_called_once()
+        _, _, content = mock_call_with_fallback.call_args[0]
+        assert content == "raw text"
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_missing_path_exits_before_provider(self, mock_load_config, mock_call_with_fallback, tmp_path, capsys):
+        """A missing file path must exit with code 2 without calling any provider."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        missing = tmp_path / "missing.log"
+        with patch.object(sys, "argv", ["freeloader", "summarize", str(missing)]):
+            with pytest.raises(SystemExit) as exc:
+                fl.main()
+        assert exc.value.code == 2
+        mock_call_with_fallback.assert_not_called()
+
+    @patch.object(fl, "call_with_fallback")
+    @patch.object(fl, "load_config")
+    def test_text_flag_with_path_errors(self, mock_load_config, mock_call_with_fallback, tmp_path):
+        """--text plus a file path is ambiguous and must fail without calling any provider."""
+        mock_load_config.return_value = {"providers": make_providers("gemini")}
+        f = tmp_path / "file.txt"
+        f.write_text("file content")
+        with patch.object(sys, "argv", ["freeloader", "summarize", str(f), "--text=raw text"]):
+            with pytest.raises(SystemExit) as exc:
+                fl.main()
+        assert exc.value.code == 2
+        mock_call_with_fallback.assert_not_called()
+
 
 @pytest.mark.skipif(not BINARY.exists(), reason="freeloader not installed (~/.local/bin/freeloader)")
 class TestCLI:

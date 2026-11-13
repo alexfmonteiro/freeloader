@@ -10,6 +10,7 @@ Usage:
   freeloader '<instructions>' [<file_path_or_->]
   echo "data" | freeloader '<instructions>'
   curl -s https://example.com | freeloader '<instructions>'
+  freeloader --text '<raw_text>' '<instructions>'
   freeloader --list-providers
   freeloader --stats
   freeloader --discover
@@ -47,7 +48,8 @@ TEE_MAX_FILES = 20
 CHARS_PER_TOKEN = 4  # rough estimate for savings tracking
 
 # ── Bad-distillation detection ──────────────────────────────────────────────────
-# If the LLM response contains these phrases, it failed to process the input usefully.
+# If the LLM response starts with one of these phrases, it is a refusal, not an extraction.
+# Only the start is checked: summaries of logs and errors often quote these phrases mid-text.
 BAD_DISTILLATION_PHRASES = [
     "please provide",
     "i cannot",
@@ -133,12 +135,15 @@ def truncate_content(content, provider_name):
 
 def is_bad_distillation(result: str, content: str) -> bool:
     """Return True if the LLM response looks useless — trigger fallback to next provider."""
-    result_lower = result.lower().strip()
-    for phrase in BAD_DISTILLATION_PHRASES:
-        if phrase in result_lower:
-            return True
+    stripped = result.strip()
+    if stripped == "[nothing found]":
+        return False
+    # Drop leading markdown (bold, headings, quotes, bullets) so "**I cannot...**" still matches
+    head = stripped.lstrip(" \t\r\n*_#>-`").lower()
+    if head.startswith(tuple(BAD_DISTILLATION_PHRASES)):
+        return True
     # Suspiciously tiny response for non-trivial input
-    if len(content) > 1000 and len(result.strip()) < 15:
+    if len(content) > 1000 and len(stripped) < 15:
         return True
     return False
 
@@ -158,8 +163,15 @@ def read_content(source):
     try:
         with open(source, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
-    except (FileNotFoundError, IsADirectoryError, PermissionError):
-        return source
+    except FileNotFoundError:
+        print(f"Error: file not found: {source}", file=sys.stderr)
+        sys.exit(2)
+    except IsADirectoryError:
+        print(f"Error: source is a directory: {source}", file=sys.stderr)
+        sys.exit(2)
+    except PermissionError:
+        print(f"Error: permission denied: {source}", file=sys.stderr)
+        sys.exit(2)
 
 
 # ── Tee (raw output recovery) ──────────────────────────────────────────────────
@@ -341,6 +353,10 @@ def discover_missed_savings():
 
 # ── LLM calls ─────────────────────────────────────────────────────────────────
 
+class ProviderResponseError(Exception):
+    """A 200 response with no usable text (missing choices, null or empty content)."""
+
+
 def call_llm(provider, instructions, content):
     content, was_truncated = truncate_content(content, provider["name"])
     if was_truncated:
@@ -371,7 +387,18 @@ def call_llm(provider, instructions, content):
         timeout=DEFAULT_TIMEOUT,
     )
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    data = r.json()
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not choices or not isinstance(choices, list):
+        raise ProviderResponseError("no choices in response")
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = choice.get("message") or {}
+    text = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        finish_reason = choice.get("finish_reason")
+        reason = f" (finish_reason={finish_reason})" if finish_reason else ""
+        raise ProviderResponseError(f"empty response{reason}")
+    return text
 
 
 def call_with_fallback(providers, instructions, content):
@@ -396,6 +423,12 @@ def call_with_fallback(providers, instructions, content):
         except requests.exceptions.Timeout:
             errors.append((p["name"], "timeout"))
             print(f"[{p['name']}] timed out, trying next provider...", file=sys.stderr)
+        except ProviderResponseError as e:
+            errors.append((p["name"], str(e)))
+            print(f"[{p['name']}] {e}, trying next provider...", file=sys.stderr)
+        except ValueError:
+            errors.append((p["name"], "invalid JSON response"))
+            print(f"[{p['name']}] invalid JSON response, trying next provider...", file=sys.stderr)
         except requests.exceptions.RequestException as e:
             errors.append((p["name"], str(e)))
             print(f"[{p['name']}] error, trying next provider...", file=sys.stderr)
@@ -421,12 +454,13 @@ def main():
     parser.add_argument("--list-providers", action="store_true", help="List configured providers and exit")
     parser.add_argument("--stats", action="store_true", help="Show token savings statistics")
     parser.add_argument("--discover", action="store_true", help="Scan Claude Code session history for missed savings")
+    parser.add_argument("--text", help="Use TEXT as input instead of a file")
     parser.add_argument("instructions", nargs="?", help="What to extract or summarize")
     parser.add_argument(
         "source",
         nargs="?",
         default=None,
-        help="File path, raw text, or '-' for stdin (omit to read from stdin)",
+        help="File path or '-' for stdin (omit to read from stdin)",
     )
 
     args = parser.parse_args()
@@ -446,7 +480,12 @@ def main():
     if not args.instructions:
         parser.error("instructions are required (pass as first positional argument)")
 
-    content = read_content(args.source)
+    if args.text is not None:
+        if args.source is not None:
+            parser.error("--text cannot be combined with a file path")
+        content = args.text
+    else:
+        content = read_content(args.source)
 
     if not content.strip():
         print("Error: empty input", file=sys.stderr)
