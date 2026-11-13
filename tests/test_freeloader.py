@@ -487,6 +487,68 @@ class TestCallWithFallback:
                 saved = tee_files[0].read_text()
                 assert "ERROR" in saved  # raw input preserved
 
+    @staticmethod
+    def raw_response(body):
+        m = MagicMock()
+        m.json.return_value = body
+        m.raise_for_status = MagicMock()
+        return m
+
+    MALFORMED_BODIES = {
+        "null_content": {"choices": [{"message": {"content": None}, "finish_reason": "length"}]},
+        "empty_choices": {"choices": []},
+        "missing_choices": {"error": {"message": "upstream error"}},
+    }
+
+    @pytest.mark.parametrize("kind", list(MALFORMED_BODIES))
+    @patch("requests.post")
+    def test_malformed_response_falls_through(self, mock_post, kind):
+        """Empty or malformed 200 responses → next provider is used."""
+        mock_post.side_effect = [
+            self.raw_response(self.MALFORMED_BODIES[kind]),
+            mock_response("1002: Connection timeout\n1004: Null constraint violation"),
+        ]
+        result, provider = fl.call_with_fallback(
+            make_providers("gemini", "groq"), "list failed jobs", DATA_CSV
+        )
+        assert "1002" in result
+        assert provider == "groq"
+        assert mock_post.call_count == 2
+
+    @pytest.mark.parametrize("kind", list(MALFORMED_BODIES))
+    @patch("requests.post")
+    def test_malformed_response_all_fail_writes_tee(self, mock_post, kind, capsys):
+        """When every provider returns a malformed response, tee is saved and exit code is 1."""
+        mock_post.side_effect = lambda *a, **kw: self.raw_response(self.MALFORMED_BODIES[kind])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tee_dir = Path(tmpdir)
+            with patch.object(fl, "TEE_DIR", tee_dir):
+                with pytest.raises(SystemExit) as exc:
+                    fl.call_with_fallback(make_providers("gemini", "groq"), "list errors", APP_LOG)
+                assert exc.value.code == 1
+                tee_files = list(tee_dir.glob("freeloader-*.txt"))
+                assert len(tee_files) == 1
+                assert "ERROR" in tee_files[0].read_text()
+        assert mock_post.call_count == 2
+        err = capsys.readouterr().err
+        if kind == "null_content":
+            assert "gemini: empty response (finish_reason=length)" in err
+        else:
+            assert "gemini: no choices in response" in err
+
+    @patch("requests.post")
+    def test_invalid_json_falls_through(self, mock_post):
+        """A non-JSON 200 body → next provider is used."""
+        bad = MagicMock()
+        bad.raise_for_status = MagicMock()
+        bad.json.side_effect = json.JSONDecodeError("Expecting value", "<html>", 0)
+        mock_post.side_effect = [bad, mock_response("prod-db-01, prod-db-02")]
+        result, provider = fl.call_with_fallback(
+            make_providers("gemini", "groq"), "list DB hosts", CONFIG_YAML
+        )
+        assert "prod-db-01" in result
+        assert provider == "groq"
+
     @patch("requests.post")
     def test_unconfigured_provider_skipped(self, mock_post):
         """Providers with placeholder API keys are not called."""
