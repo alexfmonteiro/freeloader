@@ -932,6 +932,27 @@ class TestMain:
         assert exc.value.code == 2
         mock_call_with_fallback.assert_not_called()
 
+    @patch.object(fl, "call_with_fallback")
+    def test_small_interactive_input_passes_through_unchanged(self, mock_call_with_fallback, capsys):
+        content = "Install package foo? [Y/n]"
+        with patch.object(sys, "argv", ["freeloader", "summarize", f"--text={content}"]):
+            fl.main()
+        assert capsys.readouterr().out == content
+        mock_call_with_fallback.assert_not_called()
+
+    @patch.object(fl, "call_with_fallback")
+    def test_large_interactive_input_prints_only_tail(self, mock_call_with_fallback, capsys):
+        """A huge log ending in a prompt must not be dumped raw into Claude's context."""
+        limit = fl.INTERACTIVE_PASSTHROUGH_MAX_CHARS
+        content = "log line\n" * 200_000 + "Continue? "
+        with patch.object(sys, "argv", ["freeloader", "summarize", f"--text={content}"]):
+            fl.main()
+        out = capsys.readouterr().out
+        omitted = len(content) - limit
+        assert out == f"[freeloader: {omitted} earlier chars omitted]\n" + content[-limit:]
+        assert out.endswith("Continue? ")
+        mock_call_with_fallback.assert_not_called()
+
 
 @pytest.mark.skipif(not BINARY.exists(), reason="freeloader not installed (~/.local/bin/freeloader)")
 class TestCLI:

@@ -82,6 +82,9 @@ INTERACTIVE_TAIL_PATTERNS = [
     r"Continue\? ",
     r"Are you sure",
 ]
+# Above this size, pass through only the tail so a huge log ending in a prompt
+# doesn't land raw in Claude's context.
+INTERACTIVE_PASSTHROUGH_MAX_CHARS = 2000
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 # Framed for the actual consumer: a paid AI coding assistant, not a human.
@@ -493,6 +496,10 @@ def main():
 
     # Interactive passthrough — don't LLM-process prompts expecting user input
     if is_interactive_input(content):
+        if len(content) > INTERACTIVE_PASSTHROUGH_MAX_CHARS:
+            omitted = len(content) - INTERACTIVE_PASSTHROUGH_MAX_CHARS
+            print(f"[freeloader: {omitted} earlier chars omitted]")
+            content = content[-INTERACTIVE_PASSTHROUGH_MAX_CHARS:]
         print(content, end="")
         return
 
