@@ -48,7 +48,8 @@ TEE_MAX_FILES = 20
 CHARS_PER_TOKEN = 4  # rough estimate for savings tracking
 
 # ── Bad-distillation detection ──────────────────────────────────────────────────
-# If the LLM response contains these phrases, it failed to process the input usefully.
+# If the LLM response starts with one of these phrases, it is a refusal, not an extraction.
+# Only the start is checked: summaries of logs and errors often quote these phrases mid-text.
 BAD_DISTILLATION_PHRASES = [
     "please provide",
     "i cannot",
@@ -134,12 +135,15 @@ def truncate_content(content, provider_name):
 
 def is_bad_distillation(result: str, content: str) -> bool:
     """Return True if the LLM response looks useless — trigger fallback to next provider."""
-    result_lower = result.lower().strip()
-    for phrase in BAD_DISTILLATION_PHRASES:
-        if phrase in result_lower:
-            return True
+    stripped = result.strip()
+    if stripped == "[nothing found]":
+        return False
+    # Drop leading markdown (bold, headings, quotes, bullets) so "**I cannot...**" still matches
+    head = stripped.lstrip(" \t\r\n*_#>-`").lower()
+    if head.startswith(tuple(BAD_DISTILLATION_PHRASES)):
+        return True
     # Suspiciously tiny response for non-trivial input
-    if len(content) > 1000 and len(result.strip()) < 15:
+    if len(content) > 1000 and len(stripped) < 15:
         return True
     return False
 
