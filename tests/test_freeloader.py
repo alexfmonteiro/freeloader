@@ -225,6 +225,32 @@ class TestBadDistillation:
         good = "1002: Connection timeout\n1004: Null constraint violation\n1006: Upstream job failed"
         assert not fl.is_bad_distillation(good, DATA_CSV)
 
+    def test_unable_to_mid_text_passes(self):
+        assert not fl.is_bad_distillation("3 errors: db unable to connect at 03:12; retry failed", "x" * 2000)
+
+    def test_i_cannot_mid_text_passes(self):
+        assert not fl.is_bad_distillation("Found: 'I cannot open file' error in worker-3", "x" * 2000)
+
+    def test_cannot_determine_mid_text_passes(self):
+        good = "1. 03:12 WARN Planner: cannot determine schema for 'orders', using default"
+        assert not fl.is_bad_distillation(good, "x" * 2000)
+
+    def test_please_provide_mid_text_passes(self):
+        good = "API returned 400: 'please provide a valid token' (3 times, 04:01-04:05)"
+        assert not fl.is_bad_distillation(good, "x" * 2000)
+
+    def test_refusal_after_markdown_prefix(self):
+        assert fl.is_bad_distillation("**I cannot help with that request.**", "x" * 2000)
+
+    def test_refusal_after_leading_whitespace(self):
+        assert fl.is_bad_distillation("\n\n  Please provide the content you want summarized.", "x" * 2000)
+
+    def test_nothing_found_valid_for_huge_input(self):
+        assert not fl.is_bad_distillation("[nothing found]", "x" * 1_000_000)
+
+    def test_nothing_found_with_whitespace(self):
+        assert not fl.is_bad_distillation("  [nothing found]\n", "x" * 2000)
+
 
 class TestInteractiveInput:
     """is_interactive_input() detects prompts requiring human keystrokes."""
