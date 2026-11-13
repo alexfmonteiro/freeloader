@@ -1,0 +1,14 @@
+{
+  "name": "freeloader",
+  "description": "freeloader plugin for Claude Code",
+  "owner": {
+    "name": "Alex Monteiro"
+  },
+  "plugins": [
+    {
+      "name": "freeloader",
+      "source": "./",
+      "description": "Offload Claude's parsing tasks to free LLMs"
+    }
+  ]
+}

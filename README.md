@@ -32,6 +32,69 @@ Then add your API keys to `~/.config/freeloader/config.json`:
 - **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys (free, ~1B tokens/month)
 - **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys (free, 1M tokens/day)
 
+## Install as a Claude Code plugin
+
+The repo is also a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). In your shell:
+
+```bash
+claude plugin marketplace add alexfmonteiro/freeloader
+claude plugin install freeloader@freeloader
+```
+
+The plugin installs only the `freeloader` skill. It enables no hooks.
+
+A plugin can't place files in your home directory, so you still run `./install.sh` for the `freeloader` CLI in `~/.local/bin` and the API-key config in `~/.config/freeloader/config.json`. The installer also copies the skill to `~/.claude/skills/freeloader`. Delete that copy if you use the plugin, so the skill doesn't load twice. The `CLAUDE.md` rule is still a manual step.
+
+| | Plugin | `install.sh` |
+|---|---|---|
+| `freeloader` skill | yes | yes (`~/.claude/skills/freeloader`) |
+| `freeloader` CLI in `~/.local/bin` | no | yes |
+| API-key config | no | yes |
+| Hooks | no | optional, per project |
+| `CLAUDE.md` rule | no | prints the command |
+
+### Turn on hooks
+
+To turn on a hook, add it to `~/.claude/settings.json` (all projects) or to a project's `.claude/settings.local.json`. Point the command at the hook script in your clone of this repo. Use one WebFetch hook at most.
+
+`suggest-webfetch`: WebFetch runs, and Claude gets a freeloader tip.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "WebFetch", "hooks": [{ "type": "command", "command": "/path/to/freeloader/hooks/suggest-webfetch.sh" }] }
+    ]
+  }
+}
+```
+
+`block-webfetch`: WebFetch is blocked, and Claude must use `curl | freeloader`.
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "WebFetch", "hooks": [{ "type": "command", "command": "/path/to/freeloader/hooks/block-webfetch.sh" }] }
+    ]
+  }
+}
+```
+
+`intercept-read`: Read is blocked on files over 10KB (see `FREELOADER_MIN_SIZE_KB` below).
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Read", "hooks": [{ "type": "command", "command": "/path/to/freeloader/hooks/intercept-read.sh" }] }
+    ]
+  }
+}
+```
+
+If the file already has a `PreToolUse` list, add the entry to it. You can also run `./install.sh` in a project and pick the hooks at the prompt. Bypass all hooks with `touch ~/.config/freeloader/disabled`.
+
 ## Usage
 
 ```bash
