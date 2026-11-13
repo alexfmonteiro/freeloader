@@ -38,8 +38,8 @@ else
   cp "$FREELOADER_DIR/config.template.json" "$CONFIG_FILE"
   echo "${GREEN}✓${RESET} Created config at $CONFIG_FILE"
   echo "   ${BOLD}Add your API keys:${RESET}"
-  echo "   - Gemini: https://aistudio.google.com  (free, 1500 req/day)"
-  echo "   - Groq:   https://console.groq.com     (free, 14.4K req/day)"
+  echo "   - Gemini: https://aistudio.google.com  (free tier)"
+  echo "   - Groq:   https://console.groq.com     (free, 1K req/day)"
 fi
 
 # 3. Install Claude Code skill

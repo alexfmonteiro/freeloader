@@ -326,7 +326,7 @@ class TestTruncateContent:
         assert len(result) == fl.MAX_CONTENT_CHARS["cerebras"]
 
     def test_cerebras_limit_smaller_than_groq(self):
-        # Cerebras default context (8K) is much smaller than Groq
+        # Cerebras free-tier context (65K) is smaller than Groq (131K)
         assert fl.MAX_CONTENT_CHARS["cerebras"] < fl.MAX_CONTENT_CHARS["groq"]
 
     def test_unknown_provider_uses_default(self):

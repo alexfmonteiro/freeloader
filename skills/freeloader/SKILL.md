@@ -62,7 +62,7 @@ freeloader --discover
 
 ## Provider fallback
 
-Tries Gemini 2.5 Flash first, falls back to Groq Llama 4 Scout on error/rate-limit/bad response.
+Tries Gemini 3.8 Flash first, then falls back through Groq GPT OSS 120B, Mistral Small and Cerebras GPT OSS 120B on error/rate-limit/bad response.
 Config at `~/.config/freeloader/config.json`.
 
 ## Examples
