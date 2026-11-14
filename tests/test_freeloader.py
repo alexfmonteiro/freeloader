@@ -1122,3 +1122,56 @@ class TestSuggestWebfetchHook:
         r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
         assert r.returncode == 0
         assert r.stdout == ""
+
+
+INTERCEPT_READ_HOOK = REPO_ROOT / "hooks" / "intercept-read.sh"
+
+
+class TestInterceptReadHook:
+    """Piped-JSON tests for hooks/intercept-read.sh."""
+
+    def run_hook(self, tmp_path, tool_input):
+        env = {**os.environ, "HOME": str(tmp_path), "FREELOADER_MIN_SIZE_KB": "10"}
+        r = subprocess.run(
+            ["bash", str(INTERCEPT_READ_HOOK)],
+            input=json.dumps({"tool_name": "Read", "tool_input": tool_input}),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert r.returncode == 0
+        return r.stdout
+
+    def deny(self, tmp_path, tool_input):
+        return json.loads(self.run_hook(tmp_path, tool_input))["hookSpecificOutput"]
+
+    def large_file(self, tmp_path, name):
+        f = tmp_path / name
+        f.write_bytes(b"x" * 20 * 1024)
+        return str(f)
+
+    def test_large_log_without_range_is_denied(self, tmp_path):
+        out = self.deny(tmp_path, {"file_path": self.large_file(tmp_path, "app.log")})
+        assert out["permissionDecision"] == "deny"
+
+    def test_deny_reason_mentions_ranged_reads(self, tmp_path):
+        out = self.deny(tmp_path, {"file_path": self.large_file(tmp_path, "app.log")})
+        reason = out["permissionDecisionReason"]
+        assert "offset" in reason and "limit" in reason
+
+    def test_small_file_passes_through(self, tmp_path):
+        f = tmp_path / "small.log"
+        f.write_text("tiny")
+        out = self.run_hook(tmp_path, {"file_path": str(f)})
+        assert out == ""
+
+    @pytest.mark.parametrize("tool_range", [{"limit": 20}, {"offset": 1}, {"offset": 1, "limit": 20}])
+    def test_large_file_with_range_passes_through(self, tmp_path, tool_range):
+        tool_input = {"file_path": self.large_file(tmp_path, "freeloader"), **tool_range}
+        out = self.run_hook(tmp_path, tool_input)
+        assert out == ""
+
+    @pytest.mark.parametrize("name", ["shot.png", "photo.JPG", "doc.pdf", "nb.ipynb"])
+    def test_large_binary_or_notebook_passes_through(self, tmp_path, name):
+        out = self.run_hook(tmp_path, {"file_path": self.large_file(tmp_path, name)})
+        assert out == ""
