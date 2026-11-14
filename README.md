@@ -13,15 +13,15 @@ bun test 2>&1 | freeloader 'did tests pass? list failures'
 
 ## How it works
 
-1. A Claude Code [skill](https://docs.anthropic.com/en/docs/claude-code/skills) tells Claude to use `freeloader` instead of `Read`/`Grep`/`WebFetch` for parsing tasks
-2. Optional [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) intercept Read (large files) and WebFetch before Claude uses them
+1. A Claude Code [skill](https://code.claude.com/docs/en/skills) tells Claude to use `freeloader` instead of `Read`/`Grep`/`WebFetch` for parsing tasks
+2. Optional [hooks](https://code.claude.com/docs/en/hooks) intercept Read (large files) and WebFetch before Claude uses them
 3. A rule in `CLAUDE.md` enforces the pattern even mid-task (debugging, troubleshooting, etc.)
 4. Responses are framed as input for a paid LLM — nudging the free model toward maximum conciseness
 
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/freeloader.git
+git clone https://github.com/alexfmonteiro/freeloader.git
 cd freeloader
 ./install.sh
 ```
@@ -29,10 +29,12 @@ cd freeloader
 The installer asks which hooks to install. To skip the prompt (CI, scripts, agents), pass `--hooks=<1-5>`, for example `./install.sh --hooks=3 /path/to/project`. Without a terminal and without the flag, it installs no hooks.
 
 Then add your API keys to `~/.config/freeloader/config.json`:
-- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free, 1,500 req/day)
-- **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 14,400 req/day)
-- **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys (free, ~1B tokens/month)
-- **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys (free, 1M tokens/day)
+- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key ([free-tier limits](https://aistudio.google.com/docs/rate-limits))
+- **Groq**: [console.groq.com](https://console.groq.com) → API Keys ([free-tier limits](https://console.groq.com/docs/rate-limits))
+- **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys ([free-tier limits](https://docs.mistral.ai/admin/billing-usage/usage-limits))
+- **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys ([free-tier limits](https://inference-docs.cerebras.ai/support/rate-limits))
+
+Free-tier quotas change often. Check each provider's rate-limit page for the current numbers.
 
 ## Install as a Claude Code plugin
 
@@ -147,7 +149,7 @@ The installer offers three hook options:
 | Hook | File | Behavior |
 |------|------|----------|
 | **block-webfetch** | `hooks/block-webfetch.sh` | Hard-blocks WebFetch, Claude must use `curl \| freeloader` |
-| **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Allows WebFetch but adds a token-savings hint to Claude |
+| **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Lets WebFetch through the normal permission flow and adds a token-savings hint to Claude's context |
 | **intercept-read** | `hooks/intercept-read.sh` | Blocks Read on files >10KB (except partial reads with `offset`/`limit`), redirects to freeloader |
 
 Add to `.claude/settings.local.json`:
@@ -176,13 +178,15 @@ export FREELOADER_MIN_SIZE_KB=20
 
 ## Token savings
 
-| Task | Avg Claude tokens saved | At Opus pricing (~$15/M input) |
-|------|------------------------|-------------------------------|
-| Feed config parse (78KB) | ~20K tokens | ~$0.30 |
-| Log file search | ~5–15K tokens | ~$0.08–$0.23 |
-| Web page extraction | ~3–10K tokens | ~$0.05–$0.15 |
-| Test output analysis | ~2–8K tokens | ~$0.03–$0.12 |
-| Git diff summary | ~1–5K tokens | ~$0.02–$0.08 |
+| Task | Avg Claude tokens saved | At $5/M input |
+|------|------------------------|---------------|
+| Feed config parse (78KB) | ~20K tokens | ~$0.10 |
+| Log file search | ~5–15K tokens | ~$0.03–$0.08 |
+| Web page extraction | ~3–10K tokens | ~$0.02–$0.05 |
+| Test output analysis | ~2–8K tokens | ~$0.01–$0.04 |
+| Git diff summary | ~1–5K tokens | ~$0.01–$0.03 |
+
+$5/M is the input price of current Opus models on [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing). Set `claude_input_cost_per_m` in the config to match your model.
 
 Beyond cost: saved tokens stay out of your context window, keeping Claude sharp longer in long sessions.
 
@@ -190,12 +194,13 @@ Track your savings with `freeloader --stats`. Find past missed savings with `fre
 
 ## Providers
 
-| Provider | Model | Context | Free tier |
-|----------|-------|---------|-----------|
-| Gemini (primary) | gemini-2.5-flash | 1M tokens | 1,500 req/day |
-| Groq | llama-4-scout-17b-16e-instruct | 512K tokens | 14,400 req/day |
-| Mistral | mistral-small-latest | 128K tokens | ~1B tokens/month |
-| Cerebras | llama3.3-70b | 8K tokens (128K unlockable) | 1M tokens/day |
+| Provider | Model | Input freeloader sends | Free tier |
+|----------|-------|------------------------|-----------|
+| Gemini (primary) | gemini-2.5-flash | ~1M tokens | [rate limits](https://aistudio.google.com/docs/rate-limits) |
+| Groq | meta-llama/llama-4-scout-17b-16e-instruct | ~100K tokens | [rate limits](https://console.groq.com/docs/rate-limits) |
+| Mistral | mistral-small-latest | ~128K tokens | [rate limits](https://docs.mistral.ai/admin/billing-usage/usage-limits) |
+| Cerebras | qwen-3-235b-a22b-instruct-2507 | ~6K tokens (8K default context) | [rate limits](https://inference-docs.cerebras.ai/support/rate-limits) |
+| local | any OpenAI-compatible server (LM Studio by default) | ~50K tokens | none |
 
 Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
 
@@ -205,6 +210,7 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 
 ```json
 {
+  "claude_input_cost_per_m": 5.0,
   "providers": [
     {
       "name": "gemini",
@@ -216,7 +222,7 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
-      "model": "llama-4-scout-17b-16e-instruct",
+      "model": "meta-llama/llama-4-scout-17b-16e-instruct",
       "api_key": "YOUR_GROQ_API_KEY",
       "max_tokens": 4000
     },
@@ -230,8 +236,15 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "cerebras",
       "base_url": "https://api.cerebras.ai/v1",
-      "model": "llama3.3-70b",
+      "model": "qwen-3-235b-a22b-instruct-2507",
       "api_key": "YOUR_CEREBRAS_API_KEY",
+      "max_tokens": 4000
+    },
+    {
+      "name": "local",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "model": "",
+      "api_key": "lm-studio",
       "max_tokens": 4000
     }
   ]
@@ -242,13 +255,15 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 
 Add more providers by appending to the array. Any OpenAI-compatible API works.
 
+`claude_input_cost_per_m` is optional. It sets the Claude input price in $/M tokens that `--stats` and `--discover` use for dollar estimates. The default is `5.0`.
+
 ## Testing
 
 ```bash
 uv run --with pytest --with requests pytest tests/ -v
 ```
 
-87 tests covering: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
+Tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
 
 ## Requirements
 

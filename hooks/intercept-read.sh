@@ -1,7 +1,7 @@
 #!/bin/bash
 # Claude Code PreToolUse hook — blocks Read on large files and redirects to freeloader.
-# Files below the threshold pass through normally, and so do partial reads
-# (offset or limit set), so Claude can still read and edit large files.
+# Files below the threshold, and partial reads (offset or limit set), pass
+# through to the normal permission flow, so Claude can still edit large files.
 #
 # Configure threshold (default 10KB):
 #   export FREELOADER_MIN_SIZE_KB=20
@@ -17,27 +17,21 @@ MIN_SIZE_KB=${FREELOADER_MIN_SIZE_KB:-10}
 MIN_SIZE_BYTES=$((MIN_SIZE_KB * 1024))
 
 # Kill switch: touch ~/.config/freeloader/disabled to bypass all hooks
+# No output means no decision, so the normal permission flow still applies.
 if [ -f "$HOME/.config/freeloader/disabled" ]; then
-  jq -n '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }'
   exit 0
 fi
 
 INPUT=$(cat -)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
 
-allow() {
-  jq -n '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }'
-}
-
-# No file path or file doesn't exist — allow through
+# No file path or file doesn't exist — pass through with no decision
 if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
-  allow
   exit 0
 fi
 
-# Partial read (offset or limit set) — allow, so large files stay editable
+# Partial read (offset or limit set) — pass through, so large files stay editable
 if echo "$INPUT" | jq -e '.tool_input.offset != null or .tool_input.limit != null' >/dev/null 2>&1; then
-  allow
   exit 0
 fi
 
@@ -52,6 +46,4 @@ if [ "$FILE_SIZE" -gt "$MIN_SIZE_BYTES" ]; then
       permissionDecisionReason: ("File is \($size) — use freeloader to extract what you need without loading it into context:\nfreeloader \"<what you need>\" \"\($path)\"\nTo edit it, Read only the lines you need with offset and limit.")
     }
   }'
-else
-  allow
 fi
