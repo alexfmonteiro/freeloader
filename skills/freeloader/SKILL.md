@@ -62,7 +62,9 @@ freeloader --discover
 
 ## Provider fallback
 
-Tries Gemini 2.5 Flash first, falls back to Groq Llama 4 Scout on error/rate-limit/bad response.
+Tries providers in config order: Gemini 2.5 Flash, Groq Llama 4 Scout, Mistral Small, Cerebras Qwen 3 235B,
+then a local OpenAI-compatible server. Any error, rate limit or bad response moves to the next provider.
+Providers without an API key are skipped.
 Config at `~/.config/freeloader/config.json`.
 
 ## Examples
