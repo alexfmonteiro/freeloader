@@ -635,6 +635,36 @@ class TestCallWithFallback:
         assert payload["temperature"] <= 0.2
 
     @patch("requests.post")
+    def test_gpt_oss_gets_low_reasoning_effort(self, mock_post):
+        """gpt-oss models are reasoning models: request low effort to save tokens and latency."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        providers = [{"name": "groq", "api_key": "k", "base_url": "http://fake",
+                      "model": "openai/gpt-oss-120b", "max_tokens": 100}]
+        fl.call_with_fallback(providers, "summarize", "content")
+        payload = mock_post.call_args[1]["json"]
+        assert payload["reasoning_effort"] == "low"
+
+    @patch("requests.post")
+    def test_reasoning_effort_overridable_per_provider(self, mock_post):
+        """A provider's reasoning_effort config value overrides the gpt-oss default."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        providers = [{"name": "cerebras", "api_key": "k", "base_url": "http://fake",
+                      "model": "gpt-oss-120b", "max_tokens": 100, "reasoning_effort": "medium"}]
+        fl.call_with_fallback(providers, "summarize", "content")
+        payload = mock_post.call_args[1]["json"]
+        assert payload["reasoning_effort"] == "medium"
+
+    @patch("requests.post")
+    def test_no_reasoning_effort_for_other_models(self, mock_post):
+        """Non-reasoning models may reject reasoning_effort, so it is not sent by default."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        providers = [{"name": "g", "api_key": "k", "base_url": "http://fake",
+                      "model": "gemini-2.5-flash", "max_tokens": 100}]
+        fl.call_with_fallback(providers, "summarize", "content")
+        payload = mock_post.call_args[1]["json"]
+        assert "reasoning_effort" not in payload
+
+    @patch("requests.post")
     def test_instructions_embedded_in_system_prompt(self, mock_post):
         """User instructions must appear in the system prompt, not as a separate user message."""
         mock_post.return_value = mock_response(self.GOOD_RESPONSE)

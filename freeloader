@@ -36,6 +36,9 @@ CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # ── Limits ─────────────────────────────────────────────────────────────────────
 DEFAULT_TIMEOUT = 300
 DEFAULT_MAX_TOKENS = 4000  # caps LLM response; overridable per provider in config
+# gpt-oss models reason before answering; low effort keeps extraction fast and within token caps.
+# Overridable per provider with "reasoning_effort" in config.
+DEFAULT_GPT_OSS_REASONING_EFFORT = "low"
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
     "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
@@ -383,6 +386,11 @@ def call_llm(provider, instructions, content):
         "max_tokens": max_tokens,
         "stream": False,
     }
+    reasoning_effort = provider.get("reasoning_effort")
+    if reasoning_effort is None and "gpt-oss" in provider["model"]:
+        reasoning_effort = DEFAULT_GPT_OSS_REASONING_EFFORT
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
     r = requests.post(
         f"{provider['base_url']}/chat/completions",
         headers=headers,
