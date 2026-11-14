@@ -722,6 +722,38 @@ class TestStatsTracking:
             fl.track_stats(1_000, 50, "gemini")  # must not raise
 
 
+class TestSavingsPrice:
+
+    def _write(self, tmpdir, config):
+        stats_file = Path(tmpdir) / "stats.json"
+        stats_file.write_text(json.dumps([{"provider": "gemini", "tokens_saved": 1_000_000}]))
+        config_file = Path(tmpdir) / "config.json"
+        if config is not None:
+            config_file.write_text(json.dumps(config))
+        return stats_file, str(config_file)
+
+    def test_stats_uses_configured_price(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_file, config_file = self._write(tmpdir, {"providers": [], "claude_input_cost_per_m": 3.0})
+            with patch.object(fl, "STATS_FILE", stats_file), patch.object(fl, "CONFIG_PATH", config_file):
+                fl.show_stats()
+        out = capsys.readouterr().out
+        assert "~$3.00 at $3.00/M input" in out
+
+    def test_stats_defaults_to_5_per_m(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_file, config_file = self._write(tmpdir, {"providers": []})
+            with patch.object(fl, "STATS_FILE", stats_file), patch.object(fl, "CONFIG_PATH", config_file):
+                fl.show_stats()
+        assert "~$5.00 at $5.00/M input" in capsys.readouterr().out
+
+    def test_missing_config_uses_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = str(Path(tmpdir) / "none.json")
+            with patch.object(fl, "CONFIG_PATH", missing), patch.object(fl, "LEGACY_CONFIG_PATH", missing):
+                assert fl.input_cost_per_m() == 5.0
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TEE FILE (raw output recovery)
 # ══════════════════════════════════════════════════════════════════════════════
