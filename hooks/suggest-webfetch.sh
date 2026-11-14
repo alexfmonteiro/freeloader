@@ -1,6 +1,7 @@
 #!/bin/bash
 # Claude Code PreToolUse hook — suggests freeloader for WebFetch without hard-blocking.
-# Softer alternative to block-webfetch.sh: WebFetch proceeds but Claude sees a token tip.
+# Softer alternative to block-webfetch.sh: WebFetch goes through the normal permission flow and
+# Claude sees a token tip via additionalContext.
 #
 # Add to .claude/settings.local.json:
 #   "hooks": {
@@ -10,8 +11,8 @@
 #   }
 
 # Kill switch: touch ~/.config/freeloader/disabled to bypass all hooks
+# No output means no decision, so the normal permission flow still applies.
 if [ -f "$HOME/.config/freeloader/disabled" ]; then
-  jq -n '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }'
   exit 0
 fi
 
@@ -22,15 +23,7 @@ if [ -n "$URL" ]; then
   jq -n --arg url "$URL" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      permissionDecisionReason: ("Token tip: curl -s \($url) | freeloader \"<what you need>\" saves tokens vs WebFetch")
-    }
-  }'
-else
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow"
+      additionalContext: ("Token tip: curl -s \($url) | freeloader \"<what you need>\" saves tokens vs WebFetch")
     }
   }'
 fi
