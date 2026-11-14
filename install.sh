@@ -50,11 +50,23 @@ else
   echo "   $FREELOADER_DIR/README.md for where to get them and the free tiers."
 fi
 
-# 3. Install Claude Code skill
+# 3. Install Claude Code skill, unless the plugin already provides it
 SKILL_DIR="$HOME/.claude/skills/freeloader"
-mkdir -p "$SKILL_DIR"
-cp "$FREELOADER_DIR/skills/freeloader/SKILL.md" "$SKILL_DIR/SKILL.md"
-echo "${GREEN}✓${RESET} Installed Claude Code skill to $SKILL_DIR"
+PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+if [ -f "$PLUGINS_FILE" ] && grep -q '"freeloader@' "$PLUGINS_FILE"; then
+  # A second copy would make the skill load twice
+  if [ -f "$SKILL_DIR/SKILL.md" ]; then
+    rm "$SKILL_DIR/SKILL.md"
+    rmdir "$SKILL_DIR" 2>/dev/null || true
+    echo "${GREEN}✓${RESET} Removed skill copy at $SKILL_DIR (the freeloader plugin provides it)"
+  else
+    echo "${GREEN}✓${RESET} Skipped skill copy (the freeloader plugin provides it)"
+  fi
+else
+  mkdir -p "$SKILL_DIR"
+  cp "$FREELOADER_DIR/skills/freeloader/SKILL.md" "$SKILL_DIR/SKILL.md"
+  echo "${GREEN}✓${RESET} Installed Claude Code skill to $SKILL_DIR"
+fi
 
 # 4. Hook selection
 echo ""

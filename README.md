@@ -47,11 +47,11 @@ claude plugin install freeloader@freeloader
 
 The plugin installs only the `freeloader` skill. It enables no hooks.
 
-A plugin can't place files in your home directory, so you still run `./install.sh` for the `freeloader` CLI in `~/.local/bin` and the API-key config in `~/.config/freeloader/config.json`. The installer also copies the skill to `~/.claude/skills/freeloader`. Delete that copy if you use the plugin, so the skill doesn't load twice. The `CLAUDE.md` rule is still a manual step.
+A plugin can't place files in your home directory, so you still run `./install.sh` for the `freeloader` CLI in `~/.local/bin` and the API-key config in `~/.config/freeloader/config.json`. The installer copies the skill to `~/.claude/skills/freeloader` only when the plugin isn't installed, so the skill doesn't load twice. If you install the plugin after `./install.sh`, run `./install.sh` again to remove the copy. The `CLAUDE.md` rule is still a manual step.
 
 | | Plugin | `install.sh` |
 |---|---|---|
-| `freeloader` skill | yes | yes (`~/.claude/skills/freeloader`) |
+| `freeloader` skill | yes | yes (`~/.claude/skills/freeloader`), skipped when the plugin is installed |
 | `freeloader` CLI in `~/.local/bin` | no | yes |
 | API-key config | no | yes |
 | Hooks | no | optional, per project |
@@ -132,7 +132,7 @@ freeloader --discover
 
 ### 1. Skill (automatic delegation)
 
-The installer places the skill at `~/.claude/skills/freeloader/SKILL.md`. Claude Code loads it automatically and will proactively use `freeloader` for parsing tasks — including command output like test results and git diffs.
+The plugin or the installer places the skill. The installer uses `~/.claude/skills/freeloader/SKILL.md`. Claude Code loads it automatically and will proactively use `freeloader` for parsing tasks — including command output like test results and git diffs.
 
 ### 2. CLAUDE.md rule (enforce mid-task)
 
