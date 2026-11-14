@@ -72,7 +72,7 @@ fi
 echo ""
 echo "${BOLD}Claude Code hooks (optional):${RESET}"
 echo "  1) block-webfetch   — hard-blocks WebFetch, forces freeloader (strongest)"
-echo "  2) suggest-webfetch — allows WebFetch but hints freeloader (softer)"
+echo "  2) suggest-webfetch — lets WebFetch run but hints freeloader (softer)"
 echo "  3) intercept-read   — blocks Read on files >10KB, forces freeloader (recommended)"
 echo "  4) block-webfetch + intercept-read"
 echo "  5) none"
