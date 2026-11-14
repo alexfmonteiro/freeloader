@@ -9,6 +9,7 @@ Run with:
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 FREELOADER_SCRIPT = REPO_ROOT / "freeloader"
-BINARY = Path.home() / ".local" / "bin" / "freeloader"
 
 from importlib.machinery import SourceFileLoader
 _loader = SourceFileLoader("freeloader", str(FREELOADER_SCRIPT))
@@ -989,15 +989,46 @@ class TestMain:
         mock_call_with_fallback.assert_not_called()
 
 
-@pytest.mark.skipif(not BINARY.exists(), reason="freeloader not installed (~/.local/bin/freeloader)")
+def _cli_command():
+    """Run the repo script with uv when available, else python3 with requests."""
+    if shutil.which("uv"):
+        return ["uv", "run", "--script", str(FREELOADER_SCRIPT)]
+    if importlib.util.find_spec("requests"):
+        return [sys.executable, str(FREELOADER_SCRIPT)]
+    return None
+
+
+CLI_COMMAND = _cli_command()
+
+
+@pytest.mark.skipif(CLI_COMMAND is None, reason="needs uv, or requests installed for python3")
 class TestCLI:
+
+    @pytest.fixture(autouse=True)
+    def temp_home(self, tmp_path):
+        """Isolated HOME with a config whose keys are unset, so no test touches ~ or the network."""
+        config_dir = tmp_path / ".config" / "freeloader"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.json").write_text(json.dumps({"providers": [{
+            "name": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "model": "gemini-2.5-flash",
+            "api_key": "YOUR_GEMINI_API_KEY_HERE",
+            "max_tokens": 4000,
+        }]}))
+        self.env = {**os.environ, "HOME": str(tmp_path)}
+        if CLI_COMMAND[0] == "uv":
+            # Keep the real uv cache so the script's deps are not downloaded into the temp HOME.
+            cache_dir = subprocess.run(["uv", "cache", "dir"], capture_output=True, text=True).stdout.strip()
+            self.env["UV_CACHE_DIR"] = cache_dir
 
     def run(self, *args, input_text=None):
         return subprocess.run(
-            [str(BINARY), *args],
+            [*CLI_COMMAND, *args],
             input=input_text,
             capture_output=True,
             text=True,
+            env=self.env,
         )
 
     def test_list_providers_exits_zero(self):
