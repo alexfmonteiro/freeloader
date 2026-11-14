@@ -39,7 +39,7 @@ DEFAULT_MAX_TOKENS = 4000  # caps LLM response; overridable per provider in conf
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
     "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
-    "groq": 400_000,      # Groq Llama 4 Scout: ~100K tokens effective
+    "groq": 10_000,       # Groq free tier: 8K tokens/min (gpt-oss-120b), shared with the response
     "mistral": 500_000,   # Mistral Small 3.1: 128K tokens
     "cerebras": 24_000,   # Cerebras Qwen 3 235B: 8K tokens default
 }
@@ -104,7 +104,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "Task: {instructions}"
 )
 
-OPUS_COST_PER_M = 15.0  # $/M input tokens at Opus pricing
+DEFAULT_INPUT_COST_PER_M = 5.0  # $/M Claude input tokens; override with "claude_input_cost_per_m" in config
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -117,6 +117,16 @@ def load_config():
     except FileNotFoundError:
         print(f"Error: config not found. Run install.sh or create {CONFIG_PATH}", file=sys.stderr)
         sys.exit(1)
+
+
+def input_cost_per_m():
+    """Claude input price for savings estimates. Never exits: stats work without a config."""
+    path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else LEGACY_CONFIG_PATH
+    try:
+        with open(path, "r") as f:
+            return float(json.load(f).get("claude_input_cost_per_m", DEFAULT_INPUT_COST_PER_M))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return DEFAULT_INPUT_COST_PER_M
 
 
 def list_providers():
@@ -240,13 +250,14 @@ def show_stats():
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     recent = [e for e in stats if e.get("ts", "") >= cutoff]
     recent_saved = sum(e.get("tokens_saved", 0) for e in recent)
-    total_cost_saved = total_saved / 1_000_000 * OPUS_COST_PER_M
+    price = input_cost_per_m()
+    total_cost_saved = total_saved / 1_000_000 * price
 
     print("freeloader stats")
     print("────────────────")
     print(f"Total calls:        {total_calls:,}")
     print(f"Tokens routed out:  {total_consumed:,}")
-    print(f"Tokens saved:       {total_saved:,}  (~${total_cost_saved:.2f} at Opus pricing)")
+    print(f"Tokens saved:       {total_saved:,}  (~${total_cost_saved:.2f} at ${price:.2f}/M input)")
     print(f"Last 30 days saved: {recent_saved:,} tokens")
     print()
     print("By provider:")
@@ -333,7 +344,8 @@ def discover_missed_savings():
     )
     # Freeloader would compress to ~5% of original
     est_saved = int(est_tokens * 0.90)
-    est_cost = est_saved / 1_000_000 * OPUS_COST_PER_M
+    price = input_cost_per_m()
+    est_cost = est_saved / 1_000_000 * price
 
     print("Missed savings in Claude Code session history")
     print("─────────────────────────────────────────────")
@@ -342,7 +354,7 @@ def discover_missed_savings():
     print(f"Grep calls that could use freeloader:          {len(missed_greps)}")
     print()
     print(f"Estimated tokens that could have been saved:  ~{est_saved:,}")
-    print(f"Estimated cost saved (at Opus pricing):       ~${est_cost:.2f}")
+    print(f"Estimated cost saved (at ${price:.2f}/M input):      ~${est_cost:.2f}")
     print()
     if missed_reads:
         print(f"Largest files read directly (top 5):")
