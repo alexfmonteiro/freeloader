@@ -211,7 +211,8 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "model": "gemini-2.5-flash",
       "api_key": "YOUR_GEMINI_API_KEY",
-      "max_tokens": 4000
+      "max_tokens": 4000,
+      "extra_body": {"reasoning_effort": "none"}
     },
     {
       "name": "groq",
@@ -239,6 +240,8 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 ```
 
 `max_tokens` caps the response length per provider — forcing brevity and reducing the tokens that do land in Claude's context. Increase it if you need longer summaries.
+
+`extra_body` is optional. Its keys are merged into the request payload and override defaults like `temperature`, but not `model` or `messages`. Use it for provider-specific parameters. The Gemini entry above sets `"reasoning_effort": "none"` to turn off thinking on Gemini 2.5 Flash, so hidden reasoning doesn't use up `max_tokens`. Check the provider's docs before you add a parameter, because unknown keys can cause errors.
 
 Add more providers by appending to the array. Any OpenAI-compatible API works.
 

@@ -5,7 +5,8 @@
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "model": "gemini-2.5-flash",
       "api_key": "YOUR_GEMINI_API_KEY_HERE",
-      "max_tokens": 4000
+      "max_tokens": 4000,
+      "extra_body": {"reasoning_effort": "none"}
     },
     {
       "name": "groq",
