@@ -196,10 +196,10 @@ Track your savings with `freeloader --stats`. Find past missed savings with `fre
 
 | Provider | Model | Input freeloader sends | Free tier |
 |----------|-------|------------------------|-----------|
-| Gemini (primary) | gemini-2.5-flash | ~1M tokens | [rate limits](https://aistudio.google.com/docs/rate-limits) |
-| Groq | meta-llama/llama-4-scout-17b-16e-instruct | ~100K tokens | [rate limits](https://console.groq.com/docs/rate-limits) |
+| Gemini (primary) | gemini-3.8-flash | ~1M tokens | [rate limits](https://aistudio.google.com/docs/rate-limits) |
+| Groq | openai/gpt-oss-120b | ~100K tokens | [rate limits](https://console.groq.com/docs/rate-limits) |
 | Mistral | mistral-small-latest | ~128K tokens | [rate limits](https://docs.mistral.ai/admin/billing-usage/usage-limits) |
-| Cerebras | qwen-3-235b-a22b-instruct-2507 | ~6K tokens (8K default context) | [rate limits](https://inference-docs.cerebras.ai/support/rate-limits) |
+| Cerebras | gpt-oss-120b | ~60K tokens (65K free-tier context) | [rate limits](https://inference-docs.cerebras.ai/support/rate-limits) |
 | local | any OpenAI-compatible server (LM Studio by default) | ~50K tokens | none |
 
 Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
@@ -215,14 +215,14 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "gemini",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.8-flash",
       "api_key": "YOUR_GEMINI_API_KEY",
       "max_tokens": 4000
     },
     {
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
-      "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "model": "openai/gpt-oss-120b",
       "api_key": "YOUR_GROQ_API_KEY",
       "max_tokens": 4000
     },
@@ -236,7 +236,7 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "cerebras",
       "base_url": "https://api.cerebras.ai/v1",
-      "model": "qwen-3-235b-a22b-instruct-2507",
+      "model": "gpt-oss-120b",
       "api_key": "YOUR_CEREBRAS_API_KEY",
       "max_tokens": 4000
     },
@@ -256,6 +256,10 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 Add more providers by appending to the array. Any OpenAI-compatible API works.
 
 `claude_input_cost_per_m` is optional. It sets the Claude input price in $/M tokens that `--stats` and `--discover` use for dollar estimates. The default is `5.0`.
+
+### Upgrading
+
+`install.sh` never overwrites an existing `~/.config/freeloader/config.json`. When the default models change, edit the `model` values in your config by hand to match `config.template.json`.
 
 ## Testing
 

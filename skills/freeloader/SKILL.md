@@ -62,7 +62,7 @@ freeloader --discover
 
 ## Provider fallback
 
-Tries providers in config order: Gemini 2.5 Flash, Groq Llama 4 Scout, Mistral Small, Cerebras Qwen 3 235B,
+Tries providers in config order: Gemini 3.8 Flash, Groq GPT OSS 120B, Mistral Small, Cerebras GPT OSS 120B,
 then a local OpenAI-compatible server. Any error, rate limit or bad response moves to the next provider.
 Providers without an API key are skipped.
 Config at `~/.config/freeloader/config.json`.
