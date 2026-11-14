@@ -83,7 +83,7 @@ To turn on a hook, add it to `~/.claude/settings.json` (all projects) or to a pr
 }
 ```
 
-`intercept-read`: Read is blocked on files over 10KB (see `FREELOADER_MIN_SIZE_KB` below).
+`intercept-read`: Read is blocked on files over 10KB (see `FREELOADER_MIN_SIZE_KB` below). Reads with `offset` or `limit` pass, so Claude can still edit large files.
 
 ```json
 {
@@ -148,7 +148,7 @@ The installer offers three hook options:
 |------|------|----------|
 | **block-webfetch** | `hooks/block-webfetch.sh` | Hard-blocks WebFetch, Claude must use `curl \| freeloader` |
 | **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Allows WebFetch but adds a token-savings hint to Claude |
-| **intercept-read** | `hooks/intercept-read.sh` | Blocks Read on files >10KB, redirects to freeloader |
+| **intercept-read** | `hooks/intercept-read.sh` | Blocks Read on files >10KB (except partial reads with `offset`/`limit`), redirects to freeloader |
 
 Add to `.claude/settings.local.json`:
 

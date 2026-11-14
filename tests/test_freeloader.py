@@ -889,6 +889,51 @@ class TestScenarios:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# HOOK TESTS — intercept-read.sh
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestInterceptReadHook:
+
+    HOOK = REPO_ROOT / "hooks" / "intercept-read.sh"
+
+    def decision(self, tool_input, tmp_path):
+        r = subprocess.run(
+            ["bash", str(self.HOOK)],
+            input=json.dumps({"tool_name": "Read", "tool_input": tool_input}),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(tmp_path)},
+        )
+        assert r.returncode == 0
+        return json.loads(r.stdout)["hookSpecificOutput"]
+
+    @pytest.fixture
+    def large_file(self, tmp_path):
+        f = tmp_path / "big.py"
+        f.write_text("x = 1\n" * 4000)
+        return str(f)
+
+    def test_small_file_allowed(self, tmp_path):
+        f = tmp_path / "small.py"
+        f.write_text("x = 1\n")
+        out = self.decision({"file_path": str(f)}, tmp_path)
+        assert out["permissionDecision"] == "allow"
+
+    def test_large_file_denied(self, tmp_path, large_file):
+        out = self.decision({"file_path": large_file}, tmp_path)
+        assert out["permissionDecision"] == "deny"
+        assert "offset" in out["permissionDecisionReason"]
+
+    def test_large_file_with_offset_allowed(self, tmp_path, large_file):
+        out = self.decision({"file_path": large_file, "offset": 100}, tmp_path)
+        assert out["permissionDecision"] == "allow"
+
+    def test_large_file_with_limit_allowed(self, tmp_path, large_file):
+        out = self.decision({"file_path": large_file, "limit": 50}, tmp_path)
+        assert out["permissionDecision"] == "allow"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CLI TESTS — subprocess calls against installed binary
 # ══════════════════════════════════════════════════════════════════════════════
 
