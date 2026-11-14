@@ -240,6 +240,8 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 
 `max_tokens` caps the response length per provider — forcing brevity and reducing the tokens that do land in Claude's context. Increase it if you need longer summaries.
 
+For `gpt-oss` models (reasoning models on Groq and Cerebras), freeloader sends `reasoning_effort: "low"` so reasoning doesn't eat the token cap. Set `"reasoning_effort"` on a provider to override it (`"medium"`, `"high"`), or to send it to another reasoning model.
+
 Add more providers by appending to the array. Any OpenAI-compatible API works.
 
 ## Testing
