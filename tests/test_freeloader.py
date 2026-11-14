@@ -325,9 +325,12 @@ class TestTruncateContent:
         assert truncated
         assert len(result) == fl.MAX_CONTENT_CHARS["cerebras"]
 
-    def test_cerebras_limit_smaller_than_groq(self):
-        # Cerebras default context (8K) is much smaller than Groq
-        assert fl.MAX_CONTENT_CHARS["cerebras"] < fl.MAX_CONTENT_CHARS["groq"]
+    def test_groq_limit_fits_free_tier_tpm(self):
+        # Groq free tier allows 8K tokens/min; input (~3 chars/token for logs and code),
+        # system prompt and the default response must all fit in one request
+        input_tokens = fl.MAX_CONTENT_CHARS["groq"] // 3
+        system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
+        assert input_tokens + system_tokens + fl.DEFAULT_MAX_TOKENS <= 8000
 
     def test_unknown_provider_uses_default(self):
         big = "x" * (fl.DEFAULT_MAX_CHARS + 500)
