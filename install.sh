@@ -8,8 +8,17 @@ YELLOW=$(tput setaf 3 2>/dev/null || echo "")
 
 # Where this script lives (source of truth for freeloader files)
 FREELOADER_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# Target project for hooks/CLAUDE.md (default: current directory)
-TARGET_DIR="${1:-$(pwd)}"
+# Optional --hooks=<1-5> skips the hook prompt; the remaining argument is the
+# target project for hooks/CLAUDE.md (default: current directory)
+hook_choice=""
+TARGET_DIR=""
+for arg in "$@"; do
+  case "$arg" in
+    --hooks=*) hook_choice="${arg#--hooks=}" ;;
+    *) TARGET_DIR="$arg" ;;
+  esac
+done
+TARGET_DIR="${TARGET_DIR:-$(pwd)}"
 
 echo "${BOLD}freeloader installer${RESET}"
 echo "--------------------"
@@ -37,27 +46,41 @@ if [ -f "$CONFIG_FILE" ]; then
 else
   cp "$FREELOADER_DIR/config.template.json" "$CONFIG_FILE"
   echo "${GREEN}✓${RESET} Created config at $CONFIG_FILE"
-  echo "   ${BOLD}Add your API keys:${RESET}"
-  echo "   - Gemini: https://aistudio.google.com  (free tier)"
-  echo "   - Groq:   https://console.groq.com     (free, 1K req/day)"
+  echo "   ${BOLD}Add your API keys.${RESET} See the Installation and Providers sections in"
+  echo "   $FREELOADER_DIR/README.md for where to get them and the free tiers."
 fi
 
-# 3. Install Claude Code skill
+# 3. Install Claude Code skill, unless the plugin already provides it
 SKILL_DIR="$HOME/.claude/skills/freeloader"
-mkdir -p "$SKILL_DIR"
-cp "$FREELOADER_DIR/skills/freeloader/SKILL.md" "$SKILL_DIR/SKILL.md"
-echo "${GREEN}✓${RESET} Installed Claude Code skill to $SKILL_DIR"
+PLUGINS_FILE="$HOME/.claude/plugins/installed_plugins.json"
+if [ -f "$PLUGINS_FILE" ] && grep -q '"freeloader@' "$PLUGINS_FILE"; then
+  # A second copy would make the skill load twice
+  if [ -f "$SKILL_DIR/SKILL.md" ]; then
+    rm "$SKILL_DIR/SKILL.md"
+    rmdir "$SKILL_DIR" 2>/dev/null || true
+    echo "${GREEN}✓${RESET} Removed skill copy at $SKILL_DIR (the freeloader plugin provides it)"
+  else
+    echo "${GREEN}✓${RESET} Skipped skill copy (the freeloader plugin provides it)"
+  fi
+else
+  mkdir -p "$SKILL_DIR"
+  cp "$FREELOADER_DIR/skills/freeloader/SKILL.md" "$SKILL_DIR/SKILL.md"
+  echo "${GREEN}✓${RESET} Installed Claude Code skill to $SKILL_DIR"
+fi
 
 # 4. Hook selection
 echo ""
 echo "${BOLD}Claude Code hooks (optional):${RESET}"
 echo "  1) block-webfetch   — hard-blocks WebFetch, forces freeloader (strongest)"
-echo "  2) suggest-webfetch — allows WebFetch but hints freeloader (softer)"
+echo "  2) suggest-webfetch — lets WebFetch run but hints freeloader (softer)"
 echo "  3) intercept-read   — blocks Read on files >10KB, forces freeloader (recommended)"
-echo "  4) all of the above"
+echo "  4) block-webfetch + intercept-read"
 echo "  5) none"
 echo ""
-read -p "Install hooks for current project? [1-5, default=5] " hook_choice
+if [ -z "$hook_choice" ]; then
+  # No terminal (piped, CI, agents): read hits EOF, so fall back to "none"
+  read -r -p "Install hooks for current project? [1-5, default=5] " hook_choice || hook_choice=5
+fi
 
 install_hook() {
   local src="$1"
@@ -103,7 +126,10 @@ if [ -n "$SHOW_SETTINGS" ]; then
   echo '   "hooks": {'
   echo '     "PreToolUse": ['
   if [ -n "$WEBFETCH_HOOK" ]; then
-    echo "       { \"matcher\": \"WebFetch\", \"hooks\": [{ \"type\": \"command\", \"command\": \"$WEBFETCH_HOOK\" }] },"
+    # Comma only when another entry follows, so the snippet stays valid JSON
+    sep=""
+    [ -n "$READ_HOOK" ] && sep=","
+    echo "       { \"matcher\": \"WebFetch\", \"hooks\": [{ \"type\": \"command\", \"command\": \"$WEBFETCH_HOOK\" }] }$sep"
   fi
   if [ -n "$READ_HOOK" ]; then
     echo "       { \"matcher\": \"Read\", \"hooks\": [{ \"type\": \"command\", \"command\": \"$READ_HOOK\" }] }"

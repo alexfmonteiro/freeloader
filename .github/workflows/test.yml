@@ -1,0 +1,21 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install jq
+        run: command -v jq || (sudo apt-get update && sudo apt-get install -y jq)
+      - name: Run tests
+        run: uv run --with pytest --with requests pytest tests/ -v

@@ -9,6 +9,7 @@ Run with:
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 FREELOADER_SCRIPT = REPO_ROOT / "freeloader"
-BINARY = Path.home() / ".local" / "bin" / "freeloader"
 
 from importlib.machinery import SourceFileLoader
 _loader = SourceFileLoader("freeloader", str(FREELOADER_SCRIPT))
@@ -325,9 +325,12 @@ class TestTruncateContent:
         assert truncated
         assert len(result) == fl.MAX_CONTENT_CHARS["cerebras"]
 
-    def test_cerebras_limit_smaller_than_groq(self):
-        # Cerebras free-tier context (65K) is smaller than Groq (131K)
-        assert fl.MAX_CONTENT_CHARS["cerebras"] < fl.MAX_CONTENT_CHARS["groq"]
+    def test_groq_limit_fits_free_tier_tpm(self):
+        # Groq free tier allows 8K tokens/min; input (~3 chars/token for logs and code),
+        # system prompt and the default response must all fit in one request
+        input_tokens = fl.MAX_CONTENT_CHARS["groq"] // 3
+        system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
+        assert input_tokens + system_tokens + fl.DEFAULT_MAX_TOKENS <= 8000
 
     def test_unknown_provider_uses_default(self):
         big = "x" * (fl.DEFAULT_MAX_CHARS + 500)
@@ -719,6 +722,38 @@ class TestStatsTracking:
             fl.track_stats(1_000, 50, "gemini")  # must not raise
 
 
+class TestSavingsPrice:
+
+    def _write(self, tmpdir, config):
+        stats_file = Path(tmpdir) / "stats.json"
+        stats_file.write_text(json.dumps([{"provider": "gemini", "tokens_saved": 1_000_000}]))
+        config_file = Path(tmpdir) / "config.json"
+        if config is not None:
+            config_file.write_text(json.dumps(config))
+        return stats_file, str(config_file)
+
+    def test_stats_uses_configured_price(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_file, config_file = self._write(tmpdir, {"providers": [], "claude_input_cost_per_m": 3.0})
+            with patch.object(fl, "STATS_FILE", stats_file), patch.object(fl, "CONFIG_PATH", config_file):
+                fl.show_stats()
+        out = capsys.readouterr().out
+        assert "~$3.00 at $3.00/M input" in out
+
+    def test_stats_defaults_to_5_per_m(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_file, config_file = self._write(tmpdir, {"providers": []})
+            with patch.object(fl, "STATS_FILE", stats_file), patch.object(fl, "CONFIG_PATH", config_file):
+                fl.show_stats()
+        assert "~$5.00 at $5.00/M input" in capsys.readouterr().out
+
+    def test_missing_config_uses_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = str(Path(tmpdir) / "none.json")
+            with patch.object(fl, "CONFIG_PATH", missing), patch.object(fl, "LEGACY_CONFIG_PATH", missing):
+                assert fl.input_cost_per_m() == 5.0
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TEE FILE (raw output recovery)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -932,16 +967,68 @@ class TestMain:
         assert exc.value.code == 2
         mock_call_with_fallback.assert_not_called()
 
+    @patch.object(fl, "call_with_fallback")
+    def test_small_interactive_input_passes_through_unchanged(self, mock_call_with_fallback, capsys):
+        content = "Install package foo? [Y/n]"
+        with patch.object(sys, "argv", ["freeloader", "summarize", f"--text={content}"]):
+            fl.main()
+        assert capsys.readouterr().out == content
+        mock_call_with_fallback.assert_not_called()
 
-@pytest.mark.skipif(not BINARY.exists(), reason="freeloader not installed (~/.local/bin/freeloader)")
+    @patch.object(fl, "call_with_fallback")
+    def test_large_interactive_input_prints_only_tail(self, mock_call_with_fallback, capsys):
+        """A huge log ending in a prompt must not be dumped raw into Claude's context."""
+        limit = fl.INTERACTIVE_PASSTHROUGH_MAX_CHARS
+        content = "log line\n" * 200_000 + "Continue? "
+        with patch.object(sys, "argv", ["freeloader", "summarize", f"--text={content}"]):
+            fl.main()
+        out = capsys.readouterr().out
+        omitted = len(content) - limit
+        assert out == f"[freeloader: {omitted} earlier chars omitted]\n" + content[-limit:]
+        assert out.endswith("Continue? ")
+        mock_call_with_fallback.assert_not_called()
+
+
+def _cli_command():
+    """Run the repo script with uv when available, else python3 with requests."""
+    if shutil.which("uv"):
+        return ["uv", "run", "--script", str(FREELOADER_SCRIPT)]
+    if importlib.util.find_spec("requests"):
+        return [sys.executable, str(FREELOADER_SCRIPT)]
+    return None
+
+
+CLI_COMMAND = _cli_command()
+
+
+@pytest.mark.skipif(CLI_COMMAND is None, reason="needs uv, or requests installed for python3")
 class TestCLI:
+
+    @pytest.fixture(autouse=True)
+    def temp_home(self, tmp_path):
+        """Isolated HOME with a config whose keys are unset, so no test touches ~ or the network."""
+        config_dir = tmp_path / ".config" / "freeloader"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.json").write_text(json.dumps({"providers": [{
+            "name": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "model": "gemini-2.5-flash",
+            "api_key": "YOUR_GEMINI_API_KEY_HERE",
+            "max_tokens": 4000,
+        }]}))
+        self.env = {**os.environ, "HOME": str(tmp_path)}
+        if CLI_COMMAND[0] == "uv":
+            # Keep the real uv cache so the script's deps are not downloaded into the temp HOME.
+            cache_dir = subprocess.run(["uv", "cache", "dir"], capture_output=True, text=True).stdout.strip()
+            self.env["UV_CACHE_DIR"] = cache_dir
 
     def run(self, *args, input_text=None):
         return subprocess.run(
-            [str(BINARY), *args],
+            [*CLI_COMMAND, *args],
             input=input_text,
             capture_output=True,
             text=True,
+            env=self.env,
         )
 
     def test_list_providers_exits_zero(self):
@@ -996,3 +1083,135 @@ class TestCLI:
         os.unlink(f.name)
         if r.returncode == 0:
             assert r.stdout.strip() != ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOK TESTS — run hook scripts with synthetic PreToolUse input
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSuggestWebfetchHook:
+
+    HOOK = REPO_ROOT / "hooks" / "suggest-webfetch.sh"
+
+    def run(self, payload, home):
+        return subprocess.run(
+            ["bash", str(self.HOOK)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(home)},
+        )
+
+    def test_tip_goes_to_claude_without_permission_decision(self, tmp_path):
+        r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
+        assert r.returncode == 0
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        assert out["hookEventName"] == "PreToolUse"
+        assert "curl -s https://example.com | freeloader" in out["additionalContext"]
+        assert "permissionDecision" not in out
+        assert "permissionDecisionReason" not in out
+
+    def test_no_url_prints_nothing(self, tmp_path):
+        r = self.run({"tool_input": {}}, tmp_path)
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+    def test_kill_switch_prints_nothing(self, tmp_path):
+        (tmp_path / ".config" / "freeloader").mkdir(parents=True)
+        (tmp_path / ".config" / "freeloader" / "disabled").touch()
+        r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+
+INTERCEPT_READ_HOOK = REPO_ROOT / "hooks" / "intercept-read.sh"
+
+
+class TestInterceptReadHook:
+    """Piped-JSON tests for hooks/intercept-read.sh."""
+
+    def run_hook(self, tmp_path, tool_input):
+        env = {**os.environ, "HOME": str(tmp_path), "FREELOADER_MIN_SIZE_KB": "10"}
+        r = subprocess.run(
+            ["bash", str(INTERCEPT_READ_HOOK)],
+            input=json.dumps({"tool_name": "Read", "tool_input": tool_input}),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert r.returncode == 0
+        return r.stdout
+
+    def deny(self, tmp_path, tool_input):
+        return json.loads(self.run_hook(tmp_path, tool_input))["hookSpecificOutput"]
+
+    def large_file(self, tmp_path, name):
+        f = tmp_path / name
+        f.write_bytes(b"x" * 20 * 1024)
+        return str(f)
+
+    def test_large_log_without_range_is_denied(self, tmp_path):
+        out = self.deny(tmp_path, {"file_path": self.large_file(tmp_path, "app.log")})
+        assert out["permissionDecision"] == "deny"
+
+    def test_deny_reason_mentions_ranged_reads(self, tmp_path):
+        out = self.deny(tmp_path, {"file_path": self.large_file(tmp_path, "app.log")})
+        reason = out["permissionDecisionReason"]
+        assert "offset" in reason and "limit" in reason
+
+    def test_small_file_passes_through(self, tmp_path):
+        f = tmp_path / "small.log"
+        f.write_text("tiny")
+        out = self.run_hook(tmp_path, {"file_path": str(f)})
+        assert out == ""
+
+    @pytest.mark.parametrize("tool_range", [{"limit": 20}, {"offset": 1}, {"offset": 1, "limit": 20}])
+    def test_large_file_with_range_passes_through(self, tmp_path, tool_range):
+        tool_input = {"file_path": self.large_file(tmp_path, "freeloader"), **tool_range}
+        out = self.run_hook(tmp_path, tool_input)
+        assert out == ""
+
+    @pytest.mark.parametrize("name", ["shot.png", "photo.JPG", "doc.pdf", "nb.ipynb"])
+    def test_large_binary_or_notebook_passes_through(self, tmp_path, name):
+        out = self.run_hook(tmp_path, {"file_path": self.large_file(tmp_path, name)})
+        assert out == ""
+
+
+class TestInstallScript:
+    """install.sh skips or removes the skill copy when the plugin is installed."""
+
+    def run_install(self, home: Path):
+        target = home / "project"
+        target.mkdir(exist_ok=True)
+        return subprocess.run(
+            ["bash", str(REPO_ROOT / "install.sh"), "--hooks=5", str(target)],
+            env={**os.environ, "HOME": str(home)},
+            capture_output=True,
+            text=True,
+        )
+
+    def install_plugin(self, home: Path):
+        plugins = home / ".claude" / "plugins"
+        plugins.mkdir(parents=True)
+        (plugins / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {"freeloader@freeloader": [{"scope": "user"}]}})
+        )
+
+    def test_copies_skill_without_plugin(self, tmp_path):
+        r = self.run_install(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path / ".claude" / "skills" / "freeloader" / "SKILL.md").exists()
+
+    def test_skips_skill_with_plugin(self, tmp_path):
+        self.install_plugin(tmp_path)
+        r = self.run_install(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert not (tmp_path / ".claude" / "skills" / "freeloader").exists()
+
+    def test_removes_existing_copy_with_plugin(self, tmp_path):
+        assert self.run_install(tmp_path).returncode == 0
+        self.install_plugin(tmp_path)
+        r = self.run_install(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert not (tmp_path / ".claude" / "skills" / "freeloader").exists()
+        assert "Removed skill copy" in r.stdout
