@@ -19,6 +19,8 @@ fi
 INPUT=$(cat -)
 URL=$(echo "$INPUT" | jq -r '.tool_input.url // empty' 2>/dev/null)
 
+# No permissionDecision: WebFetch keeps its normal permission prompt.
+# additionalContext goes to Claude; permissionDecisionReason would go to the user.
 if [ -n "$URL" ]; then
   jq -n --arg url "$URL" '{
     hookSpecificOutput: {
