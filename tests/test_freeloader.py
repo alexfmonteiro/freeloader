@@ -1020,3 +1020,43 @@ class TestCLI:
         os.unlink(f.name)
         if r.returncode == 0:
             assert r.stdout.strip() != ""
+
+
+class TestInstallScript:
+    """install.sh skips or removes the skill copy when the plugin is installed."""
+
+    def run_install(self, home: Path):
+        target = home / "project"
+        target.mkdir(exist_ok=True)
+        return subprocess.run(
+            ["bash", str(REPO_ROOT / "install.sh"), "--hooks=5", str(target)],
+            env={**os.environ, "HOME": str(home)},
+            capture_output=True,
+            text=True,
+        )
+
+    def install_plugin(self, home: Path):
+        plugins = home / ".claude" / "plugins"
+        plugins.mkdir(parents=True)
+        (plugins / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {"freeloader@freeloader": [{"scope": "user"}]}})
+        )
+
+    def test_copies_skill_without_plugin(self, tmp_path):
+        r = self.run_install(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path / ".claude" / "skills" / "freeloader" / "SKILL.md").exists()
+
+    def test_skips_skill_with_plugin(self, tmp_path):
+        self.install_plugin(tmp_path)
+        r = self.run_install(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert not (tmp_path / ".claude" / "skills" / "freeloader").exists()
+
+    def test_removes_existing_copy_with_plugin(self, tmp_path):
+        assert self.run_install(tmp_path).returncode == 0
+        self.install_plugin(tmp_path)
+        r = self.run_install(tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert not (tmp_path / ".claude" / "skills" / "freeloader").exists()
+        assert "Removed skill copy" in r.stdout
