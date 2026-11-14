@@ -1017,3 +1017,42 @@ class TestCLI:
         os.unlink(f.name)
         if r.returncode == 0:
             assert r.stdout.strip() != ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOK TESTS — run hook scripts with synthetic PreToolUse input
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSuggestWebfetchHook:
+
+    HOOK = REPO_ROOT / "hooks" / "suggest-webfetch.sh"
+
+    def run(self, payload, home):
+        return subprocess.run(
+            ["bash", str(self.HOOK)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(home)},
+        )
+
+    def test_tip_goes_to_claude_without_permission_decision(self, tmp_path):
+        r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
+        assert r.returncode == 0
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        assert out["hookEventName"] == "PreToolUse"
+        assert "curl -s https://example.com | freeloader" in out["additionalContext"]
+        assert "permissionDecision" not in out
+        assert "permissionDecisionReason" not in out
+
+    def test_no_url_prints_nothing(self, tmp_path):
+        r = self.run({"tool_input": {}}, tmp_path)
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+    def test_kill_switch_prints_nothing(self, tmp_path):
+        (tmp_path / ".config" / "freeloader").mkdir(parents=True)
+        (tmp_path / ".config" / "freeloader" / "disabled").touch()
+        r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
+        assert r.returncode == 0
+        assert r.stdout == ""

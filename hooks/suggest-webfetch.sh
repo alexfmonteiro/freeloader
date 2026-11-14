@@ -11,26 +11,19 @@
 
 # Kill switch: touch ~/.config/freeloader/disabled to bypass all hooks
 if [ -f "$HOME/.config/freeloader/disabled" ]; then
-  jq -n '{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } }'
   exit 0
 fi
 
 INPUT=$(cat -)
 URL=$(echo "$INPUT" | jq -r '.tool_input.url // empty' 2>/dev/null)
 
+# No permissionDecision: WebFetch keeps its normal permission prompt.
+# additionalContext goes to Claude; permissionDecisionReason would go to the user.
 if [ -n "$URL" ]; then
   jq -n --arg url "$URL" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      permissionDecisionReason: ("Token tip: curl -s \($url) | freeloader \"<what you need>\" saves tokens vs WebFetch")
-    }
-  }'
-else
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow"
+      additionalContext: ("Token tip: curl -s \($url) | freeloader \"<what you need>\" saves tokens vs WebFetch")
     }
   }'
 fi
