@@ -924,6 +924,48 @@ class TestScenarios:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# HOOK TESTS — intercept-read.sh
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestInterceptReadHook:
+
+    HOOK = REPO_ROOT / "hooks" / "intercept-read.sh"
+
+    def run(self, tool_input, home):
+        r = subprocess.run(
+            ["bash", str(self.HOOK)],
+            input=json.dumps({"tool_name": "Read", "tool_input": tool_input}),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(home)},
+        )
+        assert r.returncode == 0
+        return r.stdout
+
+    @pytest.fixture
+    def large_file(self, tmp_path):
+        f = tmp_path / "big.py"
+        f.write_text("x = 1\n" * 4000)
+        return str(f)
+
+    def test_small_file_passes_through(self, tmp_path):
+        f = tmp_path / "small.py"
+        f.write_text("x = 1\n")
+        assert self.run({"file_path": str(f)}, tmp_path) == ""
+
+    def test_large_file_denied(self, tmp_path, large_file):
+        out = json.loads(self.run({"file_path": large_file}, tmp_path))["hookSpecificOutput"]
+        assert out["permissionDecision"] == "deny"
+        assert "offset" in out["permissionDecisionReason"]
+
+    def test_large_file_with_offset_passes_through(self, tmp_path, large_file):
+        assert self.run({"file_path": large_file, "offset": 100}, tmp_path) == ""
+
+    def test_large_file_with_limit_passes_through(self, tmp_path, large_file):
+        assert self.run({"file_path": large_file, "limit": 50}, tmp_path) == ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CLI TESTS — subprocess calls against installed binary
 # ══════════════════════════════════════════════════════════════════════════════
 
