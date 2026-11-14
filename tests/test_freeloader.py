@@ -654,6 +654,48 @@ class TestCallWithFallback:
         system_msg = next(m for m in payload["messages"] if m["role"] == "system")
         assert "truncated" in system_msg["content"].lower()
 
+    @patch("requests.post")
+    def test_extra_body_merged_into_payload(self, mock_post):
+        """extra_body keys are sent and override defaults like temperature."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        providers = make_providers("gemini")
+        providers[0]["extra_body"] = {"reasoning_effort": "none", "temperature": 0.5}
+        fl.call_with_fallback(providers, "summarize", APP_LOG)
+        payload = mock_post.call_args[1]["json"]
+        assert payload["reasoning_effort"] == "none"
+        assert payload["temperature"] == 0.5
+        assert payload["max_tokens"] == 500
+
+    @patch("requests.post")
+    def test_extra_body_cannot_override_model_or_messages(self, mock_post):
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        providers = make_providers("gemini")
+        providers[0]["extra_body"] = {"model": "other", "messages": []}
+        fl.call_with_fallback(providers, "summarize", APP_LOG)
+        payload = mock_post.call_args[1]["json"]
+        assert payload["model"] == "test-model"
+        assert [m["role"] for m in payload["messages"]] == ["system", "user"]
+
+    @patch("requests.post")
+    def test_no_extra_body_sends_default_payload(self, mock_post):
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        fl.call_with_fallback(make_providers("gemini"), "summarize", APP_LOG)
+        payload = mock_post.call_args[1]["json"]
+        assert set(payload) == {"model", "messages", "temperature", "max_tokens", "stream"}
+        assert payload["temperature"] == 0.1
+        assert payload["max_tokens"] == 500
+        assert payload["stream"] is False
+
+    @patch.object(fl, "load_config")
+    def test_list_providers_shows_extra_body_when_set(self, mock_load_config, capsys):
+        providers = make_providers("gemini", "groq")
+        providers[0]["extra_body"] = {"reasoning_effort": "none"}
+        mock_load_config.return_value = {"providers": providers}
+        fl.list_providers()
+        gemini_line, groq_line = capsys.readouterr().out.splitlines()
+        assert 'extra_body={"reasoning_effort": "none"}' in gemini_line
+        assert "extra_body" not in groq_line
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STATS TRACKING

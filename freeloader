@@ -124,7 +124,8 @@ def list_providers():
     for p in config["providers"]:
         key_status = "configured" if p["api_key"] and not p["api_key"].startswith("YOUR_") else "NOT SET"
         max_tok = p.get("max_tokens", DEFAULT_MAX_TOKENS)
-        print(f"  {p['name']:10s}  model={p['model']}  max_tokens={max_tok}  key={key_status}")
+        extra = f"  extra_body={json.dumps(p['extra_body'])}" if p.get("extra_body") else ""
+        print(f"  {p['name']:10s}  model={p['model']}  max_tokens={max_tok}  key={key_status}{extra}")
 
 
 # ── Content helpers ────────────────────────────────────────────────────────────
@@ -383,6 +384,8 @@ def call_llm(provider, instructions, content):
         "max_tokens": max_tokens,
         "stream": False,
     }
+    extra_body = provider.get("extra_body") or {}
+    payload.update({k: v for k, v in extra_body.items() if k not in ("model", "messages")})
     r = requests.post(
         f"{provider['base_url']}/chat/completions",
         headers=headers,
