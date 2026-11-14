@@ -26,6 +26,8 @@ cd freeloader
 ./install.sh
 ```
 
+The installer asks which hooks to install. To skip the prompt (CI, scripts, agents), pass `--hooks=<1-5>`, for example `./install.sh --hooks=3 /path/to/project`. Without a terminal and without the flag, it installs no hooks.
+
 Then add your API keys to `~/.config/freeloader/config.json`:
 - **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free, 1,500 req/day)
 - **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 14,400 req/day)
