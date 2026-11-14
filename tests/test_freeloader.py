@@ -325,9 +325,12 @@ class TestTruncateContent:
         assert truncated
         assert len(result) == fl.MAX_CONTENT_CHARS["cerebras"]
 
-    def test_cerebras_limit_smaller_than_groq(self):
-        # Cerebras default context (8K) is much smaller than Groq
-        assert fl.MAX_CONTENT_CHARS["cerebras"] < fl.MAX_CONTENT_CHARS["groq"]
+    def test_groq_limit_fits_free_tier_tpm(self):
+        # Groq free tier allows 8K tokens/min; input (~3 chars/token for logs and code),
+        # system prompt and the default response must all fit in one request
+        input_tokens = fl.MAX_CONTENT_CHARS["groq"] // 3
+        system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
+        assert input_tokens + system_tokens + fl.DEFAULT_MAX_TOKENS <= 8000
 
     def test_unknown_provider_uses_default(self):
         big = "x" * (fl.DEFAULT_MAX_CHARS + 500)
@@ -719,6 +722,38 @@ class TestStatsTracking:
             fl.track_stats(1_000, 50, "gemini")  # must not raise
 
 
+class TestSavingsPrice:
+
+    def _write(self, tmpdir, config):
+        stats_file = Path(tmpdir) / "stats.json"
+        stats_file.write_text(json.dumps([{"provider": "gemini", "tokens_saved": 1_000_000}]))
+        config_file = Path(tmpdir) / "config.json"
+        if config is not None:
+            config_file.write_text(json.dumps(config))
+        return stats_file, str(config_file)
+
+    def test_stats_uses_configured_price(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_file, config_file = self._write(tmpdir, {"providers": [], "claude_input_cost_per_m": 3.0})
+            with patch.object(fl, "STATS_FILE", stats_file), patch.object(fl, "CONFIG_PATH", config_file):
+                fl.show_stats()
+        out = capsys.readouterr().out
+        assert "~$3.00 at $3.00/M input" in out
+
+    def test_stats_defaults_to_5_per_m(self, capsys):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stats_file, config_file = self._write(tmpdir, {"providers": []})
+            with patch.object(fl, "STATS_FILE", stats_file), patch.object(fl, "CONFIG_PATH", config_file):
+                fl.show_stats()
+        assert "~$5.00 at $5.00/M input" in capsys.readouterr().out
+
+    def test_missing_config_uses_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = str(Path(tmpdir) / "none.json")
+            with patch.object(fl, "CONFIG_PATH", missing), patch.object(fl, "LEGACY_CONFIG_PATH", missing):
+                assert fl.input_cost_per_m() == 5.0
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TEE FILE (raw output recovery)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1048,3 +1083,42 @@ class TestCLI:
         os.unlink(f.name)
         if r.returncode == 0:
             assert r.stdout.strip() != ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOOK TESTS — run hook scripts with synthetic PreToolUse input
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSuggestWebfetchHook:
+
+    HOOK = REPO_ROOT / "hooks" / "suggest-webfetch.sh"
+
+    def run(self, payload, home):
+        return subprocess.run(
+            ["bash", str(self.HOOK)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(home)},
+        )
+
+    def test_tip_goes_to_claude_without_permission_decision(self, tmp_path):
+        r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
+        assert r.returncode == 0
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        assert out["hookEventName"] == "PreToolUse"
+        assert "curl -s https://example.com | freeloader" in out["additionalContext"]
+        assert "permissionDecision" not in out
+        assert "permissionDecisionReason" not in out
+
+    def test_no_url_prints_nothing(self, tmp_path):
+        r = self.run({"tool_input": {}}, tmp_path)
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+    def test_kill_switch_prints_nothing(self, tmp_path):
+        (tmp_path / ".config" / "freeloader").mkdir(parents=True)
+        (tmp_path / ".config" / "freeloader" / "disabled").touch()
+        r = self.run({"tool_input": {"url": "https://example.com"}}, tmp_path)
+        assert r.returncode == 0
+        assert r.stdout == ""
