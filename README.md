@@ -269,6 +269,12 @@ uv run --with pytest --with requests pytest tests/ -v
 
 Tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
 
+The hook scripts in `hooks/` also have a shell test suite that needs only bash and jq:
+
+```bash
+bash tests/test_hooks.sh
+```
+
 ## Requirements
 
 - [`uv`](https://github.com/astral-sh/uv) — Python script runner (`brew install uv`)
