@@ -44,7 +44,8 @@ def run_hook(name, payload, home, **extra_env):
         env=env,
     )
     assert r.returncode == 0, r.stderr
-    return json.loads(r.stdout)["hookSpecificOutput"]
+    # No output means no decision: the tool goes through the normal permission flow.
+    return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout else None
 
 
 def read_payload(file_path):
@@ -70,33 +71,27 @@ class TestInterceptRead:
         assert "11KB" in out["permissionDecisionReason"]
         assert str(big) in out["permissionDecisionReason"]
 
-    def test_small_file_allowed(self, home, tmp_path):
+    def test_small_file_passes_through(self, home, tmp_path):
         small = tmp_path / "small.txt"
         small.write_text("hello")
-        out = run_hook("intercept-read.sh", read_payload(small), home)
-        assert out["permissionDecision"] == "allow"
-        assert "permissionDecisionReason" not in out
+        assert run_hook("intercept-read.sh", read_payload(small), home) is None
 
-    def test_missing_file_allowed(self, home, tmp_path):
-        out = run_hook("intercept-read.sh", read_payload(tmp_path / "nope.txt"), home)
-        assert out["permissionDecision"] == "allow"
+    def test_missing_file_passes_through(self, home, tmp_path):
+        assert run_hook("intercept-read.sh", read_payload(tmp_path / "nope.txt"), home) is None
 
-    def test_no_file_path_allowed(self, home):
-        out = run_hook("intercept-read.sh", {"tool_name": "Read", "tool_input": {}}, home)
-        assert out["permissionDecision"] == "allow"
+    def test_no_file_path_passes_through(self, home):
+        assert run_hook("intercept-read.sh", {"tool_name": "Read", "tool_input": {}}, home) is None
 
     def test_threshold_env_var(self, home, tmp_path):
         big = tmp_path / "big.log"
         big.write_text("x" * (11 * 1024))
-        out = run_hook("intercept-read.sh", read_payload(big), home, FREELOADER_MIN_SIZE_KB="20")
-        assert out["permissionDecision"] == "allow"
+        assert run_hook("intercept-read.sh", read_payload(big), home, FREELOADER_MIN_SIZE_KB="20") is None
 
-    def test_kill_switch_allows_large_file(self, home, tmp_path):
+    def test_kill_switch_passes_large_file_through(self, home, tmp_path):
         disable(home)
         big = tmp_path / "big.log"
         big.write_text("x" * (11 * 1024))
-        out = run_hook("intercept-read.sh", read_payload(big), home)
-        assert out["permissionDecision"] == "allow"
+        assert run_hook("intercept-read.sh", read_payload(big), home) is None
 
 
 class TestBlockWebFetch:
@@ -107,27 +102,23 @@ class TestBlockWebFetch:
         assert out["permissionDecision"] == "deny"
         assert "freeloader" in out["permissionDecisionReason"]
 
-    def test_kill_switch_allows(self, home):
+    def test_kill_switch_passes_through(self, home):
         disable(home)
-        out = run_hook("block-webfetch.sh", webfetch_payload(), home)
-        assert out["permissionDecision"] == "allow"
+        assert run_hook("block-webfetch.sh", webfetch_payload(), home) is None
 
 
 class TestSuggestWebFetch:
 
-    def test_allowed_with_tip(self, home):
+    def test_tip_without_permission_decision(self, home):
         out = run_hook("suggest-webfetch.sh", webfetch_payload("https://example.com/a"), home)
         assert out["hookEventName"] == "PreToolUse"
-        assert out["permissionDecision"] == "allow"
-        assert "curl -s https://example.com/a | freeloader" in out["permissionDecisionReason"]
-
-    def test_no_url_allowed_without_tip(self, home):
-        out = run_hook("suggest-webfetch.sh", {"tool_name": "WebFetch", "tool_input": {}}, home)
-        assert out["permissionDecision"] == "allow"
+        assert "curl -s https://example.com/a | freeloader" in out["additionalContext"]
+        assert "permissionDecision" not in out
         assert "permissionDecisionReason" not in out
 
-    def test_kill_switch_allows_without_tip(self, home):
+    def test_no_url_passes_through(self, home):
+        assert run_hook("suggest-webfetch.sh", {"tool_name": "WebFetch", "tool_input": {}}, home) is None
+
+    def test_kill_switch_passes_through(self, home):
         disable(home)
-        out = run_hook("suggest-webfetch.sh", webfetch_payload(), home)
-        assert out["permissionDecision"] == "allow"
-        assert "permissionDecisionReason" not in out
+        assert run_hook("suggest-webfetch.sh", webfetch_payload(), home) is None
