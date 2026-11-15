@@ -254,6 +254,8 @@ Providers are tried in order, except that a provider whose input cap would trunc
 
 `max_tokens` caps the response length per provider — forcing brevity and reducing the tokens that do land in Claude's context. Increase it if you need longer summaries.
 
+For `gpt-oss` models (reasoning models on Groq and Cerebras), freeloader sends `reasoning_effort: "low"` so reasoning doesn't eat the token cap. Set `"reasoning_effort"` on a provider to override it (`"medium"`, `"high"`), or to send it to another reasoning model. A `reasoning_effort` inside `extra_body` wins over both.
+
 `extra_body` is optional. Its keys are merged into the request payload and override defaults like `temperature`, but not `model` or `messages`. Use it for provider-specific parameters. The Gemini entry above sets `"reasoning_effort": "none"` to turn off thinking on Gemini 2.5 Flash, so hidden reasoning doesn't use up `max_tokens`. Check the provider's docs before you add a parameter, because unknown keys can cause errors.
 
 Add more providers by appending to the array. Any OpenAI-compatible API works.
@@ -270,7 +272,7 @@ Add more providers by appending to the array. Any OpenAI-compatible API works.
 uv run --with pytest --with requests pytest tests/ -v
 ```
 
-142 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
+149 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
 
 The hook scripts in `hooks/` also have a shell test suite that needs only bash and jq:
 
