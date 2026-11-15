@@ -13,15 +13,15 @@ bun test 2>&1 | freeloader 'did tests pass? list failures'
 
 ## How it works
 
-1. A Claude Code [skill](https://docs.anthropic.com/en/docs/claude-code/skills) tells Claude to use `freeloader` instead of `Read`/`Grep`/`WebFetch` for parsing tasks
-2. Optional [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) intercept Read (large files) and WebFetch before Claude uses them
+1. A Claude Code [skill](https://code.claude.com/docs/en/skills) tells Claude to use `freeloader` instead of `Read`/`Grep`/`WebFetch` for parsing tasks
+2. Optional [hooks](https://code.claude.com/docs/en/hooks) intercept Read (large files) and WebFetch before Claude uses them
 3. A rule in `CLAUDE.md` enforces the pattern even mid-task (debugging, troubleshooting, etc.)
 4. Responses are framed as input for a paid LLM — nudging the free model toward maximum conciseness
 
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/freeloader.git
+git clone https://github.com/alexfmonteiro/freeloader.git
 cd freeloader
 ./install.sh
 ```
@@ -29,10 +29,12 @@ cd freeloader
 The installer asks which hooks to install. To skip the prompt (CI, scripts, agents), pass `--hooks=<1-5>`, for example `./install.sh --hooks=3 /path/to/project`. Without a terminal and without the flag, it installs no hooks.
 
 Then add your API keys to `~/.config/freeloader/config.json`:
-- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key (free, 1,500 req/day)
-- **Groq**: [console.groq.com](https://console.groq.com) → API Keys (free, 14,400 req/day)
-- **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys (free, ~1B tokens/month)
-- **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys (free, 1M tokens/day)
+- **Gemini**: [aistudio.google.com](https://aistudio.google.com) → Get API Key ([free-tier limits](https://aistudio.google.com/docs/rate-limits))
+- **Groq**: [console.groq.com](https://console.groq.com) → API Keys ([free-tier limits](https://console.groq.com/docs/rate-limits))
+- **Mistral**: [console.mistral.ai](https://console.mistral.ai) → API Keys ([free-tier limits](https://docs.mistral.ai/admin/billing-usage/usage-limits))
+- **Cerebras**: [cloud.cerebras.ai](https://cloud.cerebras.ai) → API Keys ([free-tier limits](https://inference-docs.cerebras.ai/support/rate-limits))
+
+Free-tier quotas change often. Check each provider's rate-limit page for the current numbers.
 
 ## Install as a Claude Code plugin
 
@@ -45,11 +47,11 @@ claude plugin install freeloader@freeloader
 
 The plugin installs only the `freeloader` skill. It enables no hooks.
 
-A plugin can't place files in your home directory, so you still run `./install.sh` for the `freeloader` CLI in `~/.local/bin` and the API-key config in `~/.config/freeloader/config.json`. The installer also copies the skill to `~/.claude/skills/freeloader`. Delete that copy if you use the plugin, so the skill doesn't load twice. The `CLAUDE.md` rule is still a manual step.
+A plugin can't place files in your home directory, so you still run `./install.sh` for the `freeloader` CLI in `~/.local/bin` and the API-key config in `~/.config/freeloader/config.json`. The installer copies the skill to `~/.claude/skills/freeloader` only when the plugin isn't installed, so the skill doesn't load twice. If you install the plugin after `./install.sh`, run `./install.sh` again to remove the copy. The `CLAUDE.md` rule is still a manual step.
 
 | | Plugin | `install.sh` |
 |---|---|---|
-| `freeloader` skill | yes | yes (`~/.claude/skills/freeloader`) |
+| `freeloader` skill | yes | yes (`~/.claude/skills/freeloader`), skipped when the plugin is installed |
 | `freeloader` CLI in `~/.local/bin` | no | yes |
 | API-key config | no | yes |
 | Hooks | no | optional, per project |
@@ -83,7 +85,7 @@ To turn on a hook, add it to `~/.claude/settings.json` (all projects) or to a pr
 }
 ```
 
-`intercept-read`: Read is blocked on files over 10KB (see `FREELOADER_MIN_SIZE_KB` below).
+`intercept-read`: Read is blocked on files over 10KB (see `FREELOADER_MIN_SIZE_KB` below). Ranged reads (`offset`/`limit`), images, PDFs and notebooks pass through.
 
 ```json
 {
@@ -130,7 +132,7 @@ freeloader --discover
 
 ### 1. Skill (automatic delegation)
 
-The installer places the skill at `~/.claude/skills/freeloader/SKILL.md`. Claude Code loads it automatically and will proactively use `freeloader` for parsing tasks — including command output like test results and git diffs.
+The plugin or the installer places the skill. The installer uses `~/.claude/skills/freeloader/SKILL.md`. Claude Code loads it automatically and will proactively use `freeloader` for parsing tasks — including command output like test results and git diffs.
 
 ### 2. CLAUDE.md rule (enforce mid-task)
 
@@ -147,8 +149,8 @@ The installer offers three hook options:
 | Hook | File | Behavior |
 |------|------|----------|
 | **block-webfetch** | `hooks/block-webfetch.sh` | Hard-blocks WebFetch, Claude must use `curl \| freeloader` |
-| **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Allows WebFetch but adds a token-savings hint to Claude |
-| **intercept-read** | `hooks/intercept-read.sh` | Blocks Read on files >10KB, redirects to freeloader |
+| **suggest-webfetch** | `hooks/suggest-webfetch.sh` | Lets WebFetch through the normal permission flow and adds a token-savings hint to Claude's context |
+| **intercept-read** | `hooks/intercept-read.sh` | Blocks Read on files >10KB, redirects to freeloader. Allows ranged reads (`offset`/`limit`), images, PDFs and notebooks |
 
 Add to `.claude/settings.local.json`:
 
@@ -176,13 +178,15 @@ export FREELOADER_MIN_SIZE_KB=20
 
 ## Token savings
 
-| Task | Avg Claude tokens saved | At Opus pricing (~$15/M input) |
-|------|------------------------|-------------------------------|
-| Feed config parse (78KB) | ~20K tokens | ~$0.30 |
-| Log file search | ~5–15K tokens | ~$0.08–$0.23 |
-| Web page extraction | ~3–10K tokens | ~$0.05–$0.15 |
-| Test output analysis | ~2–8K tokens | ~$0.03–$0.12 |
-| Git diff summary | ~1–5K tokens | ~$0.02–$0.08 |
+| Task | Avg Claude tokens saved | At $5/M input |
+|------|------------------------|---------------|
+| Feed config parse (78KB) | ~20K tokens | ~$0.10 |
+| Log file search | ~5–15K tokens | ~$0.03–$0.08 |
+| Web page extraction | ~3–10K tokens | ~$0.02–$0.05 |
+| Test output analysis | ~2–8K tokens | ~$0.01–$0.04 |
+| Git diff summary | ~1–5K tokens | ~$0.01–$0.03 |
+
+$5/M is the input price of current Opus models on [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing). Set `claude_input_cost_per_m` in the config to match your model.
 
 Beyond cost: saved tokens stay out of your context window, keeping Claude sharp longer in long sessions.
 
@@ -190,14 +194,15 @@ Track your savings with `freeloader --stats`. Find past missed savings with `fre
 
 ## Providers
 
-| Provider | Model | Context | Free tier |
-|----------|-------|---------|-----------|
-| Gemini (primary) | gemini-2.5-flash | 1M tokens | 1,500 req/day |
-| Groq | llama-4-scout-17b-16e-instruct | 512K tokens | 14,400 req/day |
-| Mistral | mistral-small-latest | 128K tokens | ~1B tokens/month |
-| Cerebras | llama3.3-70b | 8K tokens (128K unlockable) | 1M tokens/day |
+| Provider | Model | Input freeloader sends | Free tier |
+|----------|-------|------------------------|-----------|
+| Gemini (primary) | gemini-3.8-flash | ~1M tokens | [rate limits](https://aistudio.google.com/docs/rate-limits) |
+| Groq | openai/gpt-oss-120b | ~100K tokens | [rate limits](https://console.groq.com/docs/rate-limits) |
+| Mistral | mistral-small-latest | ~128K tokens | [rate limits](https://docs.mistral.ai/admin/billing-usage/usage-limits) |
+| Cerebras | gpt-oss-120b | ~60K tokens (65K free-tier context) | [rate limits](https://inference-docs.cerebras.ai/support/rate-limits) |
+| local | any OpenAI-compatible server (LM Studio by default) | ~50K tokens | none |
 
-Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
+Providers are tried in order, except that a provider whose input cap would truncate the content is tried after the providers that can read all of it. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
 
 ## Configuration
 
@@ -205,18 +210,20 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 
 ```json
 {
+  "claude_input_cost_per_m": 5.0,
   "providers": [
     {
       "name": "gemini",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "model": "gemini-2.5-flash",
+      "model": "gemini-3.8-flash",
       "api_key": "YOUR_GEMINI_API_KEY",
-      "max_tokens": 4000
+      "max_tokens": 4000,
+      "extra_body": {"reasoning_effort": "none"}
     },
     {
       "name": "groq",
       "base_url": "https://api.groq.com/openai/v1",
-      "model": "llama-4-scout-17b-16e-instruct",
+      "model": "openai/gpt-oss-120b",
       "api_key": "YOUR_GROQ_API_KEY",
       "max_tokens": 4000
     },
@@ -230,8 +237,15 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
     {
       "name": "cerebras",
       "base_url": "https://api.cerebras.ai/v1",
-      "model": "llama3.3-70b",
+      "model": "gpt-oss-120b",
       "api_key": "YOUR_CEREBRAS_API_KEY",
+      "max_tokens": 4000
+    },
+    {
+      "name": "local",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "model": "",
+      "api_key": "lm-studio",
       "max_tokens": 4000
     }
   ]
@@ -240,9 +254,17 @@ Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately m
 
 `max_tokens` caps the response length per provider — forcing brevity and reducing the tokens that do land in Claude's context. Increase it if you need longer summaries.
 
-For `gpt-oss` models (reasoning models on Groq and Cerebras), freeloader sends `reasoning_effort: "low"` so reasoning doesn't eat the token cap. Set `"reasoning_effort"` on a provider to override it (`"medium"`, `"high"`), or to send it to another reasoning model.
+For `gpt-oss` models (reasoning models on Groq and Cerebras), freeloader sends `reasoning_effort: "low"` so reasoning doesn't eat the token cap. Set `"reasoning_effort"` on a provider to override it (`"medium"`, `"high"`), or to send it to another reasoning model. A `reasoning_effort` inside `extra_body` wins over both.
+
+`extra_body` is optional. Its keys are merged into the request payload and override defaults like `temperature`, but not `model` or `messages`. Use it for provider-specific parameters. The Gemini entry above sets `"reasoning_effort": "none"` to turn off thinking on Gemini 2.5 Flash, so hidden reasoning doesn't use up `max_tokens`. Check the provider's docs before you add a parameter, because unknown keys can cause errors.
 
 Add more providers by appending to the array. Any OpenAI-compatible API works.
+
+`claude_input_cost_per_m` is optional. It sets the Claude input price in $/M tokens that `--stats` and `--discover` use for dollar estimates. The default is `5.0`.
+
+### Upgrading
+
+`install.sh` never overwrites an existing `~/.config/freeloader/config.json`. When the default models change, edit the `model` values in your config by hand to match `config.template.json`.
 
 ## Testing
 
@@ -250,7 +272,13 @@ Add more providers by appending to the array. Any OpenAI-compatible API works.
 uv run --with pytest --with requests pytest tests/ -v
 ```
 
-87 tests covering: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
+149 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
+
+The hook scripts in `hooks/` also have a shell test suite that needs only bash and jq:
+
+```bash
+bash tests/test_hooks.sh
+```
 
 ## Requirements
 

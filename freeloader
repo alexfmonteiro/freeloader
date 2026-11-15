@@ -3,8 +3,9 @@
 # dependencies = ["requests"]
 # ///
 """
-freeloader — offload file/web/log parsing to free cloud LLMs (Gemini/Groq) instead of burning
-Claude tokens on content you only need to extract or summarize.
+freeloader — offload file/web/log parsing to free LLMs (Gemini, Groq, Mistral, Cerebras, or a
+local OpenAI-compatible server) instead of burning Claude tokens on content you only need to
+extract or summarize.
 
 Usage:
   freeloader '<instructions>' [<file_path_or_->]
@@ -41,12 +42,18 @@ DEFAULT_MAX_TOKENS = 4000  # caps LLM response; overridable per provider in conf
 DEFAULT_GPT_OSS_REASONING_EFFORT = "low"
 # Rough char-to-token ratio (~4 chars/token). Leave room for instructions + response.
 MAX_CONTENT_CHARS = {
-    "gemini": 3_500_000,  # Gemini 2.5 Flash: ~1M tokens
+    "gemini": 3_500_000,  # Gemini 3.8 Flash: ~1M tokens
     "groq": 10_000,       # Groq free tier: 8K tokens/min (gpt-oss-120b), shared with the response
     "mistral": 500_000,   # Mistral Small 3.1: 128K tokens
-    "cerebras": 24_000,   # Cerebras Qwen 3 235B: 8K tokens default
+    "cerebras": 240_000,  # Cerebras GPT OSS 120B: 65K tokens on free tier
 }
 DEFAULT_MAX_CHARS = 200_000
+# Free-tier tokens/min shared by input, system prompt and response. The input cap
+# shrinks when a provider's max_tokens is raised, so one request stays under the limit.
+TOKENS_PER_MINUTE = {
+    "groq": 8_000,  # Groq free tier (gpt-oss-120b)
+}
+TPM_CHARS_PER_TOKEN = 3  # conservative: logs and code run ~3 chars/token
 TEE_MAX_FILES = 20
 CHARS_PER_TOKEN = 4  # rough estimate for savings tracking
 
@@ -107,7 +114,7 @@ SYSTEM_PROMPT_TEMPLATE = (
     "Task: {instructions}"
 )
 
-OPUS_COST_PER_M = 15.0  # $/M input tokens at Opus pricing
+DEFAULT_INPUT_COST_PER_M = 5.0  # $/M Claude input tokens; override with "claude_input_cost_per_m" in config
 
 
 # ── Config ─────────────────────────────────────────────────────────────────────
@@ -122,21 +129,48 @@ def load_config():
         sys.exit(1)
 
 
+def input_cost_per_m():
+    """Claude input price for savings estimates. Never exits: stats work without a config."""
+    path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else LEGACY_CONFIG_PATH
+    try:
+        with open(path, "r") as f:
+            return float(json.load(f).get("claude_input_cost_per_m", DEFAULT_INPUT_COST_PER_M))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return DEFAULT_INPUT_COST_PER_M
+
+
 def list_providers():
     config = load_config()
     for p in config["providers"]:
         key_status = "configured" if p["api_key"] and not p["api_key"].startswith("YOUR_") else "NOT SET"
         max_tok = p.get("max_tokens", DEFAULT_MAX_TOKENS)
-        print(f"  {p['name']:10s}  model={p['model']}  max_tokens={max_tok}  key={key_status}")
+        extra = f"  extra_body={json.dumps(p['extra_body'])}" if p.get("extra_body") else ""
+        print(f"  {p['name']:10s}  model={p['model']}  max_tokens={max_tok}  key={key_status}{extra}")
 
 
 # ── Content helpers ────────────────────────────────────────────────────────────
 
-def truncate_content(content, provider_name):
+def content_limit(provider_name, max_tokens=DEFAULT_MAX_TOKENS):
     limit = MAX_CONTENT_CHARS.get(provider_name, DEFAULT_MAX_CHARS)
+    tpm = TOKENS_PER_MINUTE.get(provider_name)
+    if tpm:
+        system_tokens = len(SYSTEM_PROMPT_TEMPLATE) // TPM_CHARS_PER_TOKEN
+        limit = min(limit, max(0, (tpm - max_tokens - system_tokens) * TPM_CHARS_PER_TOKEN))
+    return limit
+
+
+def truncate_content(content, provider_name, max_tokens=DEFAULT_MAX_TOKENS):
+    limit = content_limit(provider_name, max_tokens)
     if len(content) <= limit:
         return content, False
     return content[:limit], True
+
+
+def order_by_fit(providers, content):
+    """Move providers that would truncate content behind those that fit it whole."""
+    def fits(p):
+        return len(content) <= content_limit(p["name"], p.get("max_tokens", DEFAULT_MAX_TOKENS))
+    return [p for p in providers if fits(p)] + [p for p in providers if not fits(p)]
 
 
 def is_bad_distillation(result: str, content: str) -> bool:
@@ -243,13 +277,14 @@ def show_stats():
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     recent = [e for e in stats if e.get("ts", "") >= cutoff]
     recent_saved = sum(e.get("tokens_saved", 0) for e in recent)
-    total_cost_saved = total_saved / 1_000_000 * OPUS_COST_PER_M
+    price = input_cost_per_m()
+    total_cost_saved = total_saved / 1_000_000 * price
 
     print("freeloader stats")
     print("────────────────")
     print(f"Total calls:        {total_calls:,}")
     print(f"Tokens routed out:  {total_consumed:,}")
-    print(f"Tokens saved:       {total_saved:,}  (~${total_cost_saved:.2f} at Opus pricing)")
+    print(f"Tokens saved:       {total_saved:,}  (~${total_cost_saved:.2f} at ${price:.2f}/M input)")
     print(f"Last 30 days saved: {recent_saved:,} tokens")
     print()
     print("By provider:")
@@ -336,7 +371,8 @@ def discover_missed_savings():
     )
     # Freeloader would compress to ~5% of original
     est_saved = int(est_tokens * 0.90)
-    est_cost = est_saved / 1_000_000 * OPUS_COST_PER_M
+    price = input_cost_per_m()
+    est_cost = est_saved / 1_000_000 * price
 
     print("Missed savings in Claude Code session history")
     print("─────────────────────────────────────────────")
@@ -345,7 +381,7 @@ def discover_missed_savings():
     print(f"Grep calls that could use freeloader:          {len(missed_greps)}")
     print()
     print(f"Estimated tokens that could have been saved:  ~{est_saved:,}")
-    print(f"Estimated cost saved (at Opus pricing):       ~${est_cost:.2f}")
+    print(f"Estimated cost saved (at ${price:.2f}/M input):      ~${est_cost:.2f}")
     print()
     if missed_reads:
         print(f"Largest files read directly (top 5):")
@@ -364,12 +400,12 @@ class ProviderResponseError(Exception):
 
 
 def call_llm(provider, instructions, content):
-    content, was_truncated = truncate_content(content, provider["name"])
+    max_tokens = provider.get("max_tokens", DEFAULT_MAX_TOKENS)
+    content, was_truncated = truncate_content(content, provider["name"], max_tokens)
     if was_truncated:
         instructions += "\n\nNOTE: The input was truncated to fit context limits. Work with what is provided."
         print(f"[{provider['name']}] input truncated to {len(content):,} chars", file=sys.stderr)
 
-    max_tokens = provider.get("max_tokens", DEFAULT_MAX_TOKENS)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(instructions=instructions)
 
     headers = {
@@ -391,6 +427,8 @@ def call_llm(provider, instructions, content):
         reasoning_effort = DEFAULT_GPT_OSS_REASONING_EFFORT
     if reasoning_effort:
         payload["reasoning_effort"] = reasoning_effort
+    extra_body = provider.get("extra_body") or {}
+    payload.update({k: v for k, v in extra_body.items() if k not in ("model", "messages")})
     r = requests.post(
         f"{provider['base_url']}/chat/completions",
         headers=headers,
@@ -414,7 +452,7 @@ def call_llm(provider, instructions, content):
 
 def call_with_fallback(providers, instructions, content):
     errors = []
-    for p in providers:
+    for p in order_by_fit(providers, content):
         if not p["api_key"] or p["api_key"].startswith("YOUR_"):
             errors.append((p["name"], "API key not configured"))
             continue
