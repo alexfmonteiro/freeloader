@@ -65,6 +65,7 @@ freeloader --discover
 Tries providers in config order: Gemini 3.8 Flash, Groq GPT OSS 120B, Mistral Small, Cerebras GPT OSS 120B,
 then a local OpenAI-compatible server. Any error, rate limit or bad response moves to the next provider.
 Providers without an API key are skipped.
+A provider whose input cap would truncate the content is tried after the providers that can read all of it.
 Config at `~/.config/freeloader/config.json`.
 
 ## Examples

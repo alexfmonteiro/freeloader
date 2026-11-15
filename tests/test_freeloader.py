@@ -658,6 +658,36 @@ class TestCallWithFallback:
         assert "truncated" in system_msg["content"].lower()
 
 
+    @patch("requests.post")
+    def test_large_input_skips_provider_that_would_truncate(self, mock_post):
+        """A provider whose cap would truncate the input is tried after one that fits it whole."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        big_content = "log line\n" * 5_000  # 45K chars: over Groq's cap, under Mistral's
+        _, provider = fl.call_with_fallback(make_providers("groq", "mistral"), "summarize", big_content)
+        assert provider == "mistral"
+        assert mock_post.call_count == 1
+        payload = mock_post.call_args[1]["json"]
+        user_msg = next(m for m in payload["messages"] if m["role"] == "user")
+        assert user_msg["content"] == big_content
+
+    @patch("requests.post")
+    def test_truncating_provider_still_tried_last(self, mock_post):
+        """If every provider that fits fails, the truncating provider is still tried."""
+        import requests as req
+        mock_post.side_effect = [req.exceptions.Timeout(), mock_response(self.GOOD_RESPONSE)]
+        big_content = "log line\n" * 5_000
+        _, provider = fl.call_with_fallback(make_providers("groq", "mistral"), "summarize", big_content)
+        assert provider == "groq"
+        assert mock_post.call_count == 2
+
+    @patch("requests.post")
+    def test_small_input_keeps_config_order(self, mock_post):
+        """Inputs that fit every provider keep the configured order."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        _, provider = fl.call_with_fallback(make_providers("groq", "mistral"), "summarize", APP_LOG)
+        assert provider == "groq"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STATS TRACKING
 # ══════════════════════════════════════════════════════════════════════════════
