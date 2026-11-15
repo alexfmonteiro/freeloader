@@ -3,8 +3,9 @@
 # dependencies = ["requests"]
 # ///
 """
-freeloader — offload file/web/log parsing to free cloud LLMs (Gemini/Groq) instead of burning
-Claude tokens on content you only need to extract or summarize.
+freeloader — offload file/web/log parsing to free LLMs (Gemini, Groq, Mistral, Cerebras, or a
+local OpenAI-compatible server) instead of burning Claude tokens on content you only need to
+extract or summarize.
 
 Usage:
   freeloader '<instructions>' [<file_path_or_->]
