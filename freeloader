@@ -146,12 +146,17 @@ def list_providers():
 
 # ── Content helpers ────────────────────────────────────────────────────────────
 
-def truncate_content(content, provider_name, max_tokens=DEFAULT_MAX_TOKENS):
+def content_limit(provider_name, max_tokens=DEFAULT_MAX_TOKENS):
     limit = MAX_CONTENT_CHARS.get(provider_name, DEFAULT_MAX_CHARS)
     tpm = TOKENS_PER_MINUTE.get(provider_name)
     if tpm:
         system_tokens = len(SYSTEM_PROMPT_TEMPLATE) // TPM_CHARS_PER_TOKEN
         limit = min(limit, max(0, (tpm - max_tokens - system_tokens) * TPM_CHARS_PER_TOKEN))
+    return limit
+
+
+def truncate_content(content, provider_name, max_tokens=DEFAULT_MAX_TOKENS):
+    limit = content_limit(provider_name, max_tokens)
     if len(content) <= limit:
         return content, False
     return content[:limit], True
@@ -160,7 +165,7 @@ def truncate_content(content, provider_name, max_tokens=DEFAULT_MAX_TOKENS):
 def order_by_fit(providers, content):
     """Move providers that would truncate content behind those that fit it whole."""
     def fits(p):
-        return len(content) <= MAX_CONTENT_CHARS.get(p["name"], DEFAULT_MAX_CHARS)
+        return len(content) <= content_limit(p["name"], p.get("max_tokens", DEFAULT_MAX_TOKENS))
     return [p for p in providers if fits(p)] + [p for p in providers if not fits(p)]
 
 

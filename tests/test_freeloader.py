@@ -710,6 +710,19 @@ class TestCallWithFallback:
         assert mock_post.call_count == 2
 
     @patch("requests.post")
+    def test_groq_with_raised_max_tokens_tried_after_providers_that_fit(self, mock_post):
+        """Raising Groq's max_tokens shrinks its input cap, so it moves behind providers that fit."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        groq, mistral = make_providers("groq", "mistral")
+        groq["max_tokens"] = 6000
+        content = "log line\n" * 800  # 7.2K chars: under Groq's fixed cap, over its cap at 6000 max_tokens
+        assert len(content) <= fl.MAX_CONTENT_CHARS["groq"]
+        assert len(content) > fl.content_limit("groq", 6000)
+        _, provider = fl.call_with_fallback([groq, mistral], "summarize", content)
+        assert provider == "mistral"
+        assert mock_post.call_count == 1
+
+    @patch("requests.post")
     def test_small_input_keeps_config_order(self, mock_post):
         """Inputs that fit every provider keep the configured order."""
         mock_post.return_value = mock_response(self.GOOD_RESPONSE)
