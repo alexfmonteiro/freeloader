@@ -202,7 +202,7 @@ Track your savings with `freeloader --stats`. Find past missed savings with `fre
 | Cerebras | gpt-oss-120b | ~60K tokens (65K free-tier context) | [rate limits](https://inference-docs.cerebras.ai/support/rate-limits) |
 | local | any OpenAI-compatible server (LM Studio by default) | ~50K tokens | none |
 
-Providers are tried in order. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
+Providers are tried in order, except that a provider whose input cap would truncate the content is tried after the providers that can read all of it. Any error (rate limit, 5xx, timeout) immediately moves to the next provider — no retries on the same provider. If a response looks unhelpful (refusal phrases, suspiciously short), the next provider is also tried automatically. If all providers fail, the raw input is saved to `~/.local/share/freeloader/tee/` for recovery.
 
 ## Configuration
 
@@ -267,7 +267,7 @@ Add more providers by appending to the array. Any OpenAI-compatible API works.
 uv run --with pytest --with requests pytest tests/ -v
 ```
 
-138 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
+141 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
 
 The hook scripts in `hooks/` also have a shell test suite that needs only bash and jq:
 

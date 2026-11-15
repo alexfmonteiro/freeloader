@@ -157,6 +157,13 @@ def truncate_content(content, provider_name, max_tokens=DEFAULT_MAX_TOKENS):
     return content[:limit], True
 
 
+def order_by_fit(providers, content):
+    """Move providers that would truncate content behind those that fit it whole."""
+    def fits(p):
+        return len(content) <= MAX_CONTENT_CHARS.get(p["name"], DEFAULT_MAX_CHARS)
+    return [p for p in providers if fits(p)] + [p for p in providers if not fits(p)]
+
+
 def is_bad_distillation(result: str, content: str) -> bool:
     """Return True if the LLM response looks useless — trigger fallback to next provider."""
     stripped = result.strip()
@@ -429,7 +436,7 @@ def call_llm(provider, instructions, content):
 
 def call_with_fallback(providers, instructions, content):
     errors = []
-    for p in providers:
+    for p in order_by_fit(providers, content):
         if not p["api_key"] or p["api_key"].startswith("YOUR_"):
             errors.append((p["name"], "API key not configured"))
             continue
