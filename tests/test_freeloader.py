@@ -332,6 +332,35 @@ class TestTruncateContent:
         system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
         assert input_tokens + system_tokens + fl.DEFAULT_MAX_TOKENS <= 8000
 
+    def test_groq_limit_shrinks_when_max_tokens_raised(self):
+        # A larger response budget leaves less of the 8K tokens/min for the input
+        big = "x" * (fl.MAX_CONTENT_CHARS["groq"] + 500)
+        result, truncated = fl.truncate_content(big, "groq", max_tokens=6000)
+        assert truncated
+        input_tokens = len(result) // 3
+        system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
+        assert input_tokens + system_tokens + 6000 <= 8000
+        assert len(result) < fl.MAX_CONTENT_CHARS["groq"]
+
+    def test_groq_limit_never_negative(self):
+        result, truncated = fl.truncate_content("hello world", "groq", max_tokens=9000)
+        assert truncated
+        assert result == ""
+
+    def test_max_tokens_does_not_change_other_providers(self):
+        big = "x" * (fl.MAX_CONTENT_CHARS["mistral"] + 500)
+        result, _ = fl.truncate_content(big, "mistral", max_tokens=100_000)
+        assert len(result) == fl.MAX_CONTENT_CHARS["mistral"]
+
+    @patch("requests.post")
+    def test_call_llm_uses_provider_max_tokens_for_groq_cap(self, mock_post):
+        mock_post.return_value = mock_response("ok")
+        provider = {**make_providers("groq")[0], "max_tokens": 6000}
+        fl.call_llm(provider, "summarize", "x" * fl.MAX_CONTENT_CHARS["groq"])
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["max_tokens"] == 6000
+        assert len(sent["messages"][1]["content"]) < fl.MAX_CONTENT_CHARS["groq"]
+
     def test_unknown_provider_uses_default(self):
         big = "x" * (fl.DEFAULT_MAX_CHARS + 500)
         result, truncated = fl.truncate_content(big, "unknown_provider_xyz")

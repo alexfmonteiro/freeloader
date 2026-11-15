@@ -267,7 +267,7 @@ Add more providers by appending to the array. Any OpenAI-compatible API works.
 uv run --with pytest --with requests pytest tests/ -v
 ```
 
-134 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
+138 tests cover: bad-distillation guard, interactive passthrough, content truncation, provider fallback (HTTP 503, timeout), tee recovery, stats tracking, session JSONL scanning, missing/directory/unreadable path handling, and end-to-end scenarios with synthetic log/config/CSV/git data.
 
 The hook scripts in `hooks/` also have a shell test suite that needs only bash and jq:
 

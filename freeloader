@@ -45,6 +45,12 @@ MAX_CONTENT_CHARS = {
     "cerebras": 240_000,  # Cerebras GPT OSS 120B: 65K tokens on free tier
 }
 DEFAULT_MAX_CHARS = 200_000
+# Free-tier tokens/min shared by input, system prompt and response. The input cap
+# shrinks when a provider's max_tokens is raised, so one request stays under the limit.
+TOKENS_PER_MINUTE = {
+    "groq": 8_000,  # Groq free tier (gpt-oss-120b)
+}
+TPM_CHARS_PER_TOKEN = 3  # conservative: logs and code run ~3 chars/token
 TEE_MAX_FILES = 20
 CHARS_PER_TOKEN = 4  # rough estimate for savings tracking
 
@@ -140,8 +146,12 @@ def list_providers():
 
 # ── Content helpers ────────────────────────────────────────────────────────────
 
-def truncate_content(content, provider_name):
+def truncate_content(content, provider_name, max_tokens=DEFAULT_MAX_TOKENS):
     limit = MAX_CONTENT_CHARS.get(provider_name, DEFAULT_MAX_CHARS)
+    tpm = TOKENS_PER_MINUTE.get(provider_name)
+    if tpm:
+        system_tokens = len(SYSTEM_PROMPT_TEMPLATE) // TPM_CHARS_PER_TOKEN
+        limit = min(limit, max(0, (tpm - max_tokens - system_tokens) * TPM_CHARS_PER_TOKEN))
     if len(content) <= limit:
         return content, False
     return content[:limit], True
@@ -374,12 +384,12 @@ class ProviderResponseError(Exception):
 
 
 def call_llm(provider, instructions, content):
-    content, was_truncated = truncate_content(content, provider["name"])
+    max_tokens = provider.get("max_tokens", DEFAULT_MAX_TOKENS)
+    content, was_truncated = truncate_content(content, provider["name"], max_tokens)
     if was_truncated:
         instructions += "\n\nNOTE: The input was truncated to fit context limits. Work with what is provided."
         print(f"[{provider['name']}] input truncated to {len(content):,} chars", file=sys.stderr)
 
-    max_tokens = provider.get("max_tokens", DEFAULT_MAX_TOKENS)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(instructions=instructions)
 
     headers = {
