@@ -19,3 +19,5 @@ jobs:
         run: command -v jq || (sudo apt-get update && sudo apt-get install -y jq)
       - name: Run tests
         run: uv run --with pytest --with requests pytest tests/ -v
+      - name: Run hook shell tests
+        run: bash tests/test_hooks.sh
