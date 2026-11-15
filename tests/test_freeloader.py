@@ -332,6 +332,35 @@ class TestTruncateContent:
         system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
         assert input_tokens + system_tokens + fl.DEFAULT_MAX_TOKENS <= 8000
 
+    def test_groq_limit_shrinks_when_max_tokens_raised(self):
+        # A larger response budget leaves less of the 8K tokens/min for the input
+        big = "x" * (fl.MAX_CONTENT_CHARS["groq"] + 500)
+        result, truncated = fl.truncate_content(big, "groq", max_tokens=6000)
+        assert truncated
+        input_tokens = len(result) // 3
+        system_tokens = len(fl.SYSTEM_PROMPT_TEMPLATE) // 3
+        assert input_tokens + system_tokens + 6000 <= 8000
+        assert len(result) < fl.MAX_CONTENT_CHARS["groq"]
+
+    def test_groq_limit_never_negative(self):
+        result, truncated = fl.truncate_content("hello world", "groq", max_tokens=9000)
+        assert truncated
+        assert result == ""
+
+    def test_max_tokens_does_not_change_other_providers(self):
+        big = "x" * (fl.MAX_CONTENT_CHARS["mistral"] + 500)
+        result, _ = fl.truncate_content(big, "mistral", max_tokens=100_000)
+        assert len(result) == fl.MAX_CONTENT_CHARS["mistral"]
+
+    @patch("requests.post")
+    def test_call_llm_uses_provider_max_tokens_for_groq_cap(self, mock_post):
+        mock_post.return_value = mock_response("ok")
+        provider = {**make_providers("groq")[0], "max_tokens": 6000}
+        fl.call_llm(provider, "summarize", "x" * fl.MAX_CONTENT_CHARS["groq"])
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["max_tokens"] == 6000
+        assert len(sent["messages"][1]["content"]) < fl.MAX_CONTENT_CHARS["groq"]
+
     def test_unknown_provider_uses_default(self):
         big = "x" * (fl.DEFAULT_MAX_CHARS + 500)
         result, truncated = fl.truncate_content(big, "unknown_provider_xyz")
@@ -679,6 +708,19 @@ class TestCallWithFallback:
         _, provider = fl.call_with_fallback(make_providers("groq", "mistral"), "summarize", big_content)
         assert provider == "groq"
         assert mock_post.call_count == 2
+
+    @patch("requests.post")
+    def test_groq_with_raised_max_tokens_tried_after_providers_that_fit(self, mock_post):
+        """Raising Groq's max_tokens shrinks its input cap, so it moves behind providers that fit."""
+        mock_post.return_value = mock_response(self.GOOD_RESPONSE)
+        groq, mistral = make_providers("groq", "mistral")
+        groq["max_tokens"] = 6000
+        content = "log line\n" * 800  # 7.2K chars: under Groq's fixed cap, over its cap at 6000 max_tokens
+        assert len(content) <= fl.MAX_CONTENT_CHARS["groq"]
+        assert len(content) > fl.content_limit("groq", 6000)
+        _, provider = fl.call_with_fallback([groq, mistral], "summarize", content)
+        assert provider == "mistral"
+        assert mock_post.call_count == 1
 
     @patch("requests.post")
     def test_small_input_keeps_config_order(self, mock_post):
