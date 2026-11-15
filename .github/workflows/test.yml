@@ -17,6 +17,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install jq
         run: command -v jq || (sudo apt-get update && sudo apt-get install -y jq)
+      - name: Install shellcheck
+        run: command -v shellcheck || (sudo apt-get update && sudo apt-get install -y shellcheck)
+      - name: Lint install.sh
+        run: shellcheck install.sh
       - name: Run tests
         run: uv run --with pytest --with requests pytest tests/ -v
       - name: Run hook shell tests
