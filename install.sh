@@ -84,7 +84,8 @@ fi
 
 install_hook() {
   local src="$1"
-  local dst="$TARGET_DIR/.claude/hooks/$(basename "$src")"
+  local dst
+  dst="$TARGET_DIR/.claude/hooks/$(basename "$src")"
   mkdir -p "$TARGET_DIR/.claude/hooks"
   cp "$FREELOADER_DIR/hooks/$src" "$dst"
   chmod +x "$dst"
